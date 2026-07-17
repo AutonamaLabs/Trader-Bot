@@ -27,6 +27,11 @@ from trader_bot.metrics import compute_metrics, format_report, per_pair_summary
 
 
 def build_data(cfg, args):
+    """Build enriched features per pair. Indicators are computed on the FULL
+    history (so warmup is real) and only THEN sliced to [start, end], keeping
+    the first bars of the test window fully warmed up."""
+    start = pd.Timestamp(args.start, tz="UTC") if args.start else None
+    end = pd.Timestamp(args.end, tz="UTC") if args.end else None
     data = {}
     for pair in cfg.pairs:
         if args.data_dir:
@@ -36,7 +41,12 @@ def build_data(cfg, args):
             raw = load_csv(path)
         else:
             raw = generate_synthetic(pair, years=args.years, seed=args.seed)
-        data[pair] = build_features(raw, cfg)
+        feats = build_features(raw, cfg)
+        if start is not None:
+            feats = feats[feats.index >= start]
+        if end is not None:
+            feats = feats[feats.index <= end]
+        data[pair] = feats
     return data
 
 
@@ -46,6 +56,8 @@ def main() -> int:
     ap.add_argument("--data-dir", default=None, help="dir with <PAIR>_H4.csv real data")
     ap.add_argument("--years", type=float, default=8.0, help="synthetic history length")
     ap.add_argument("--seed", type=int, default=7, help="synthetic RNG seed")
+    ap.add_argument("--start", default=None, help="backtest start date (YYYY-MM-DD, UTC)")
+    ap.add_argument("--end", default=None, help="backtest end date (YYYY-MM-DD, UTC)")
     ap.add_argument("--out", default=str(ROOT / "results"))
     args = ap.parse_args()
 
