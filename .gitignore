@@ -11,6 +11,7 @@ env/
 # Data & outputs (keep the repo lean; regenerate locally)
 data/*.csv
 data/research/
+data/swing/
 !data/.gitkeep
 results/
 *.log
