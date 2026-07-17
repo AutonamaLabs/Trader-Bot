@@ -1,0 +1,82 @@
+# =============================================================================
+# Trader-Bot configuration — Strategy: H4-Donchian-Trend v1.0
+# Multi-timeframe trend-following breakout with ATR risk management.
+# Every value here maps 1:1 to the strategy specification (docs/STRATEGY.md).
+# =============================================================================
+
+account:
+  starting_equity: 5000.0     # USD
+  account_ccy: USD
+
+# --- Trade universe --------------------------------------------------------
+pairs: [EUR_USD, GBP_USD, USD_JPY, AUD_USD]
+signal_tf: H4                  # signal timeframe (4-hour bars)
+filter_tf: D1                  # higher-timeframe regime filter
+
+# --- Indicators ------------------------------------------------------------
+indicators:
+  donchian_period: 20         # breakout lookback (bars, excludes current)
+  ema_filter_period: 50       # D1 regime EMA
+  ema_slope_lookback_days: 5  # D1 EMA slope confirmation
+  atr_period: 14              # ATR (Wilder), H4
+  adx_period: 14              # ADX (Wilder), H4
+  adx_min: 20                 # minimum ADX to enter
+  atr_median_period: 100      # volatility-regime baseline (bars)
+  atr_band_low: 0.6           # min ATR / median ratio
+  atr_band_high: 2.5          # max ATR / median ratio
+
+# --- Exits -----------------------------------------------------------------
+exits:
+  sl_atr_mult: 2.0            # initial stop distance (x ATR at entry) => 1R
+  partial_tp_r: 1.5           # partial take-profit trigger (R)
+  partial_tp_fraction: 0.5    # fraction of position closed at partial
+  breakeven_offset_r: 0.1     # stop offset past entry after partial fills
+  trail_atr_mult: 3.0         # Chandelier trailing stop (x ATR)
+  time_stop_bars: 30          # max H4 bars without reaching +1R
+  regime_flip_days: 2         # consecutive D1 closes against pos -> exit
+
+# --- Risk management -------------------------------------------------------
+risk:
+  risk_per_trade: 0.005       # fraction of equity risked per trade
+  max_concurrent: 3           # max open positions
+  max_per_pair: 1             # max positions per pair
+  max_per_currency: 2         # max positions sharing a currency
+  notional_cap_mult: 4.0      # max notional / equity per position
+  daily_loss_halt: 0.02       # daily loss -> pause entries until next day
+  weekly_loss_halt: 0.04      # weekly loss -> pause entries until Monday
+  max_drawdown_halt: 0.15     # equity DD from HWM -> full stop (human review)
+  sizing_floor_dd: 0.85       # HWM fraction floor for sizing equity
+  # Correlated pairs that must never be held in the same direction together:
+  correlation_buckets:
+    - [EUR_USD, GBP_USD]
+
+# --- Sessions & timing (all UTC) -------------------------------------------
+sessions:
+  entry_window_start: 7       # inclusive hour
+  entry_window_end: 17        # exclusive hour
+  friday_cutoff_hour: 15      # no entries Friday at/after this hour
+  rollover_block_start: 20    # hard entry block start
+  rollover_block_end: 1       # hard entry block end (wraps midnight)
+
+# --- News filter -----------------------------------------------------------
+news:
+  block_before_min: 60
+  block_after_min: 30
+  # Always-blocked recurring events are handled in code; feed is optional.
+  always_block_events: [FOMC, NFP, US_CPI, ECB, BOE, BOJ, RBA]
+
+# --- Costs (backtest) ------------------------------------------------------
+costs:
+  slippage_pips: 0.5          # per side
+  max_spread_pips:
+    EUR_USD: 1.5
+    USD_JPY: 1.8
+    GBP_USD: 2.0
+    AUD_USD: 2.0
+  # Typical spread applied in the backtest per pair (pips):
+  typical_spread_pips:
+    EUR_USD: 0.8
+    USD_JPY: 1.0
+    GBP_USD: 1.2
+    AUD_USD: 1.2
+  spread_stop_ratio_max: 0.05 # spread must be < 5% of stop distance

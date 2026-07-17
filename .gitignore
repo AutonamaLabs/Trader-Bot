@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# Data & outputs (keep the repo lean; regenerate locally)
+data/*.csv
+!data/.gitkeep
+results/
+*.log
+
+# Secrets — NEVER commit broker keys
+.env
+secrets.yaml
+config.local.yaml
