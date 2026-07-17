@@ -1,23 +1,62 @@
-# Trader-Bot — `H4-Donchian-Trend`
+# Trader-Bot
 
-A conservative, **positive-skew trend-following forex bot** built for a $5,000
-retail account. It trades major FX pairs on the 4-hour timeframe, entering on
-Donchian breakouts aligned with the daily trend and managing every position with
-ATR-based stops, a partial take-profit, a chandelier trailing stop, and
-portfolio-level circuit breakers.
+Two forex strategies, built and validated honestly on real market data:
 
-The strategy was masterminded with the **Fable** model and is specified in full
-in [`docs/STRATEGY.md`](docs/STRATEGY.md). Every rule in that document is
-implemented here and covered by tests.
+1. **`FX-XSect-Factor` (v2, the researched edge)** — a market-neutral,
+   cross-sectional long/short factor on a daily FX + gold basket. This is the
+   one with a *real, out-of-sample-robust edge* (Sharpe ~0.45, positive in ~8/9
+   years, market-neutral). Start here → [`docs/RESEARCH.md`](docs/RESEARCH.md).
+2. **`H4-Donchian-Trend` (v1)** — a classic trend-following breakout bot
+   (masterminded with **Fable**), fully implemented with strong risk management
+   → [`docs/STRATEGY.md`](docs/STRATEGY.md). Kept because the engine is solid and
+   instructive, **but honest testing on real data showed it has no live edge**
+   (see below) — it's a well-built example, not a money-maker.
 
-> **⚠️ Honesty first.** Retail forex is hard and most bots lose money. This
-> project is engineered around *risk control and consistency*, not get-rich
-> promises. The backtest below runs on **synthetic data** (no broker key
-> required) which trends more cleanly than real markets and therefore
-> **overstates** live performance. Treat the synthetic results as a
-> demonstration of the system's *mechanics and risk behaviour*, not a forecast.
-> Realistic expectations are 8–20%/yr with 10–15% drawdowns (see spec §10).
-> **Nothing here is financial advice. Trade a practice account first.**
+> **⚠️ Honesty first.** Retail forex is hard and most systems lose. We tested
+> many strategies on **real** 2012–2022 data and most had *no* out-of-sample
+> edge. The one that survived (v2) is real but **modest** — mid-single-digit
+> CAGR at conservative sizing, with losing years. Nothing here is financial
+> advice; trade a practice account first.
+
+## TL;DR — what the research found
+
+| Strategy | Data | Result | Verdict |
+|---|---|---|---|
+| v1 Donchian trend (H4) | **real** | PF ~0.95, ~breakeven-to-negative every 3y window | ❌ no live edge |
+| Trend / momentum (H4, D1) | real | strong in-sample, **collapses** out-of-sample | ❌ regime, not edge |
+| Mean-reversion (RSI-2, D1) | real | positive 4/9 years only | ❌ fails walk-forward |
+| **v2 cross-sectional factor** | **real** | **Sharpe ~0.45, 8/9 years +, market-neutral** | ✅ **real edge** |
+
+Full methodology and numbers: [`docs/RESEARCH.md`](docs/RESEARCH.md).
+
+## v2 — the edge (`FX-XSect-Factor`)
+
+Each day, rank an 11-instrument basket (FX majors + crosses + gold) by trailing
+return and hold a **dollar-neutral long/short book** blending medium-term
+**momentum** (20d) and short-term **reversal** (5–10d) — two sleeves that are
+negatively correlated and hedge each other. Size the whole book to a 10% annual
+volatility target, leverage capped at 2×. Daily timeframe; one rebalance at the
+NY close (~21:00–22:00 UTC).
+
+```bash
+scripts/fetch_data.sh              # download real daily/H4/H1 data (git-ignored)
+python scripts/run_factor.py       # backtest the v2 edge from $5,000
+```
+
+Real-data result 2013–2022 ($5k start, 10% vol target, 2× cap): **$5,000 →
+$7,188, CAGR +4.0%, Sharpe 0.45, max DD 14%, positive in 8/10 years**, and it
+survives 2× costs and dropping any instrument.
+
+---
+
+## v1 — `H4-Donchian-Trend` (trend-following, kept for reference)
+
+A conservative, positive-skew trend-following bot for a $5,000 account: major FX
+pairs on H4, Donchian breakouts aligned with the daily trend, ATR stops, partial
+take-profit, chandelier trail, and portfolio circuit breakers. Fully implemented
+and tested — but on **real data it has no live edge** (profit factor ~0.95). The
+synthetic backtest below flatters it because synthetic markets trend too cleanly;
+it is a teaching example of a well-engineered engine, not a live money-maker.
 
 ---
 
