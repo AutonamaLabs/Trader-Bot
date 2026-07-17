@@ -20,3 +20,6 @@ for p in $INSTRUMENTS; do
 done
 wait
 echo "Downloaded $(ls -1 "$OUT" | wc -l) files into $OUT"
+
+# ECB daily reference rates (1999-present) for the cross-sectional currency test.
+curl -sS --max-time 60 "https://raw.githubusercontent.com/datasets/exchange-rates/main/data/daily.csv" -o "$OUT/../ecb_daily.csv" && echo "Fetched ECB daily rates"

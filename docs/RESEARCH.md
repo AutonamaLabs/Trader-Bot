@@ -132,6 +132,37 @@ data in this environment): a **carry sleeve** from policy-rate differentials
 (needs FRED/rate data), universe breadth, currency-netting to cut financing
 drag, and — above all — validating a frozen system on **2023–2025** data.
 
+## Follow-up: "go faster" and "cross-sectional on fresh data" (both negative)
+
+Two further avenues were tested rigorously; both failed.
+
+**Intraday / H1 (go faster).** Phase-free cross-sectional reversal at hourly
+horizons, net of a realistic 1.2bp/side cost (`scripts/intraday.py`): Sharpe
+**−9.4** at 1h hold, still negative at 12h. Retail transaction costs annihilate
+fast strategies. Confirmed dead.
+
+**Cross-sectional G10 currency factor on ECB daily data 1999–2026**
+(`scripts/cross_ccy.py`, an independent and *current* dataset — AUD/CAD/CHF/GBP/
+JPY/NOK/NZD/SEK vs EUR). This is the cleanest out-of-sample test available:
+
+| Sleeve (phase-free) | 2013–2019 | 2020–2026 (unseen) | 2023–2026 (unseen) |
+|---|---|---|---|
+| Reversal 20/5 | Sharpe +0.44 (5/7 yrs) | **+0.01 (3/7)** | **−0.02 (2/4)** |
+| Reversal 10/5 | −0.16 | +0.11 | +0.18 (1/4) |
+| Momentum 12-month | −0.31 | ~0.00 | −0.01 |
+
+The reversal edge that made 2013–2019 look good **decayed to ~zero in
+2020–2026** — the classic signature of a data-mined pattern, not a persistent
+edge. Momentum is inconsistent across eras. **On real data through 2026, across
+timeframes, instruments, and both single-name and cross-sectional structures, no
+technical edge survives out-of-sample at retail costs.**
+
+**Carry** — the one structurally-motivated factor not yet tested — needs policy-
+/interest-rate data, which is blocked in this environment (FRED and broker APIs
+are unreachable; only raw GitHub files are). It remains the single most promising
+untested idea and is the reason a real broker/data feed is required to go
+further.
+
 ## Honest limitations
 
 - Sharpe ~0.45 is real but modest; expect losing years (2017 −12.5% at 10% vol).
