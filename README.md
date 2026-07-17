@@ -25,9 +25,14 @@ Two forex strategies, built and validated honestly on real market data:
 | v1 Donchian trend (H4) | **real** | PF ~0.95, ~breakeven-to-negative every 3y window | ❌ no live edge |
 | Trend / momentum (H4, D1) | real | strong in-sample, **collapses** out-of-sample | ❌ regime, not edge |
 | Mean-reversion (RSI-2, D1) | real | positive 4/9 years only | ❌ fails walk-forward |
-| **v2 cross-sectional factor** | **real** | **Sharpe ~0.45, 8/9 years +, market-neutral** | ✅ **real edge** |
+| **v2 cross-sectional factor** | **real** | after bias audit: **momentum dead, weak fragile reversal (~0.23), tradeable book ~flat** | ⚠️ **marginal** |
 
-Full methodology and numbers: [`docs/RESEARCH.md`](docs/RESEARCH.md).
+**Integrity note:** the v2 factor's first-reported Sharpe ~0.45 was later found to
+be inflated by selection bias and rebalance-phase luck. A phase-free re-test
+(`scripts/audit_phasefree.py`) deflates it to a weak, USD/CHF-dependent reversal
+tendency whose leverage-timed live version is roughly flat 2013–2021. Honest
+verdict: **no reliable edge was established** on the data available here. Full
+methodology, numbers, and the correction: [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 ## v2 — the edge (`FX-XSect-Factor`)
 

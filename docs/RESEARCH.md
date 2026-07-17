@@ -97,6 +97,41 @@ Run it: `python scripts/run_factor.py`. Reproduce the search:
 `python scripts/research.py --tf d1`, `python scripts/walkforward.py`,
 `python scripts/cross_sectional.py --sweep`.
 
+## ⚠️ Audit & correction (important)
+
+A subsequent quant review (and `scripts/audit_phasefree.py`) found the
+originally-reported ensemble Sharpe **~0.45 was inflated by two biases**:
+
+1. **Selection bias** — the four sleeves were chosen from a full-sample grid
+   sweep (`cross_sectional.py --sweep`).
+2. **Rebalance-phase luck** — a 20-day-hold block has 20 possible start offsets.
+   Across all 20, the momentum sleeve's Sharpe averages **−0.15** (range −0.50 to
+   +0.30); the reported result had landed on a lucky phase.
+
+Rebuilding every sleeve **phase-free** (overlapping daily tranches = average of
+all offsets) gives the honest picture:
+
+| Sleeve (phase-free) | Sharpe | Positive years |
+|---|---|---|
+| Momentum 20/20 | **−0.19** | 3/9 |
+| Reversal 20/5 | **+0.23** | 7/9 |
+| Reversal 10/5 | +0.05 | 3/9 |
+
+So **cross-sectional momentum does not work** on this FX basket once phase luck is
+removed, and blending it with reversal (they are −0.78 correlated) cancels the
+edge (ensemble ≈ +0.06). The only survivor is a **weak short-term reversal**
+tendency (Sharpe ~0.23) — and it is **fragile**: dropping USD/CHF alone cuts it
+to +0.07, and the leverage-timed, tradeable version is roughly flat over
+2013–2021. **Net: the v2 edge is marginal at best, not the 4%/yr originally
+shown.** This is the same hard lesson as v1, found one level deeper — and the
+reason the audit (phase-free construction + drop-one + truly-unseen data) is now
+mandatory before believing any backtest here.
+
+Legitimate paths that could produce a *real* edge (not yet built — blocked on
+data in this environment): a **carry sleeve** from policy-rate differentials
+(needs FRED/rate data), universe breadth, currency-netting to cut financing
+drag, and — above all — validating a frozen system on **2023–2025** data.
+
 ## Honest limitations
 
 - Sharpe ~0.45 is real but modest; expect losing years (2017 −12.5% at 10% vol).
