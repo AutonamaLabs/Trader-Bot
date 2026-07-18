@@ -63,6 +63,10 @@ def run(dirpath, args):
 
     all_dates = sorted(set().union(*[set(d.index) for d in data.values()]))
     idx = pd.DatetimeIndex(all_dates)
+    if args.start:
+        idx = idx[idx >= pd.Timestamp(args.start, tz="UTC")]
+    if args.end:
+        idx = idx[idx <= pd.Timestamp(args.end, tz="UTC")]
     # Cache per-symbol row dicts for O(1) access.
     cols = ["open", "high", "low", "close", "atr", "rsi", "long", "exit"]
     A = {s: {c: d[c].reindex(idx).to_numpy() for c in cols} for s, d in data.items()}
@@ -121,6 +125,11 @@ def run(dirpath, args):
                 continue
             risk_dollars = args.risk * equity
             shares = risk_dollars / (entry - stop)
+            # Cap notional per position (tight stops must not create huge size).
+            max_shares = args.max_notional * equity / entry
+            if shares > max_shares:
+                shares = max_shares
+                risk_dollars = shares * (entry - stop)
             positions[s] = dict(entry=entry, stop=stop, shares=shares, bars=0, risk=risk_dollars)
             open_risk += risk_dollars
         pend_entry = {}   # unfilled signals are discarded, not queued (per spec)
@@ -168,6 +177,9 @@ def main():
     ap.add_argument("--risk", type=float, default=0.01)
     ap.add_argument("--max_pos", type=int, default=10)
     ap.add_argument("--max_total_risk", type=float, default=0.10)
+    ap.add_argument("--max_notional", type=float, default=0.20, help="max notional/pos as frac of equity")
+    ap.add_argument("--start", default=None, help="backtest start date (YYYY-MM-DD)")
+    ap.add_argument("--end", default=None, help="backtest end date (YYYY-MM-DD)")
     ap.add_argument("--sma", type=int, default=200)
     ap.add_argument("--rsi_n", type=int, default=3)
     ap.add_argument("--rsi_lo", type=int, default=15)

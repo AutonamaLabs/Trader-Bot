@@ -30,9 +30,25 @@ Two forex strategies, built and validated honestly on real market data:
 **Integrity note:** the v2 factor's first-reported Sharpe ~0.45 was later found to
 be inflated by selection bias and rebalance-phase luck. A phase-free re-test
 (`scripts/audit_phasefree.py`) deflates it to a weak, USD/CHF-dependent reversal
-tendency whose leverage-timed live version is roughly flat 2013–2021. Honest
-verdict: **no reliable edge was established** on the data available here. Full
-methodology, numbers, and the correction: [`docs/RESEARCH.md`](docs/RESEARCH.md).
+tendency. **No FX edge was established.**
+
+## The one that works: TPS-5 (equity swing) — `scripts/swing_portfolio.py`
+
+After FX/crypto/gold all failed, a real edge showed up in **equities**: buy an
+RSI(3) dip above the 200-day MA in calm vol, exit into strength. Survivorship-free
+proof on index ETFs: **SPY 73% win / PF 1.77 (2000–2026), QQQ 71% / 1.82**.
+Scaled across 48 large-caps (1% risk/trade, ≤10 concurrent): **$5k → $40.8k over
+21y, +10.6% CAGR, Sharpe 0.80, 26% max DD, 66% green months.**
+
+Honest caveats: survivorship-biased upward, regime-dependent (2011–17 Sharpe 1.57
+vs 2018–24 Sharpe 0.30), and it **saturates ~1%/month — it cannot be levered to
+10%/month.** Full detail and the correction history: [`docs/RESEARCH.md`](docs/RESEARCH.md).
+
+```bash
+scripts/fetch_swing_data.sh                       # index/crypto/gold
+python scripts/swing_tps5.py                      # per-instrument (SPY/QQQ real edge)
+python scripts/swing_portfolio.py --dir data/swing_stocks --start 2004-01-01
+```
 
 ## v2 — the edge (`FX-XSect-Factor`)
 

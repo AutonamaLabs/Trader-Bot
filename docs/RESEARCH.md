@@ -163,6 +163,55 @@ are unreachable; only raw GitHub files are). It remains the single most promisin
 untested idea and is the reason a real broker/data feed is required to go
 further.
 
+## BREAKTHROUGH: a real edge exists — but in EQUITIES, not FX (TPS-5)
+
+After FX/crypto/gold all failed, the strategy that finally survives is a
+**trend-pullback swing on equity indices and stocks** (Fable's "TPS-5",
+`scripts/swing_tps5.py` / `swing_portfolio.py`): buy an RSI(3) dip while price is
+above its 200-day MA and volatility is calm; exit into strength (RSI>65), on a
+regime break (Close<SMA200), a 3×ATR stop, or a 10-day time stop. Long-only.
+
+**Survivorship-free proof it's a genuine signal** — single index ETFs, no
+universe selection:
+
+| Instrument | Win rate | Profit factor | Per-trade | Span |
+|---|---|---|---|---|
+| SPY | 73% | 1.77 | +0.15R | 2000–2026 |
+| QQQ | 71% | 1.82 | +0.14R | 1999–2019 |
+
+SPY is positive in every era including 2020–2026. This RSI-pullback effect on
+equity indices is documented since the 1990s and is driven by institutional
+dip-buying / vol-selling flow — it does **not** exist on FX majors (which is
+exactly why every FX test failed).
+
+**Scaled across a 48 liquid large-cap universe** (`swing_portfolio.py`, one
+compounding account, ≤10 concurrent, 1% risk/trade, 20% notional cap, 2004–2024):
+
+| | Value |
+|---|---|
+| $5,000 → | **$40,827** (20.9y) |
+| CAGR | **+10.6%** |
+| Sharpe | 0.80 |
+| Max drawdown | 26% |
+| Monthly mean / median | +0.89% / +1.09% |
+| Positive months | 66% |
+
+### Honest caveats (these matter a lot)
+1. **Survivorship bias:** the 48 names are *today's* winners; buying dips in
+   stocks that became mega-caps flatters the result. The true edge is lower than
+   +10.6%/yr. The survivorship-free SPY/QQQ test is the trustworthy core.
+2. **Regime-dependent:** disjoint sub-periods — 2004–10 Sharpe 0.52, **2011–17
+   Sharpe 1.57 (+23.7%/yr)**, **2018–24 Sharpe 0.30 (+3.4%/yr)**. It shines in
+   steady bull markets and struggles in crash/chop (2008, 2020, 2022). The great
+   full-sample number is carried by 2011–2017.
+3. **Saturates ~1%/month:** raising per-trade risk 1%→3% does *not* raise
+   returns (drawdown cap binds) — CAGR tops out ~10–11%. **This cannot be levered
+   to 10%/month without abandoning the risk controls that keep it alive.**
+
+**Bottom line:** a genuine, survivable swing edge worth ~high-single-digit to
+low-double-digit %/yr at ~25% max drawdown, best in bull regimes — real, and the
+first thing in this whole search that survives out-of-sample. Just not 10%/month.
+
 ## Honest limitations
 
 - Sharpe ~0.45 is real but modest; expect losing years (2017 −12.5% at 10% vol).

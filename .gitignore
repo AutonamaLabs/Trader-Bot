@@ -12,6 +12,7 @@ env/
 data/*.csv
 data/research/
 data/swing/
+data/swing_stocks/
 !data/.gitkeep
 results/
 *.log
