@@ -233,6 +233,36 @@ Remaining soft spot: the 2018–2024 sub-period is still weak (PF ~1.12) — a
 crash-regime/exposure overlay is the next lever, but the blanket SPY>200MA gate
 cut drawdown without lifting PF, so a more surgical filter is needed.
 
+### Exit management: trailing / scale-in / scale-out (`scripts/swing_exits.py`)
+
+Because TPS-5 is **mean-reversion**, trend-following exit tools were tested and
+mostly backfire — the edge is the snap-back to the mean, so holding for a "runner"
+gives profit back:
+
+| Variant | PF | Win% | Sharpe | DD | verdict |
+|---|---|---|---|---|---|
+| base (exit at mean, RSI>50) | 1.44 | 67% | **0.98** | 15% | — |
+| trailing stop (let winners run) | 1.30 | 49% | 0.71 | 20% | **hurts** |
+| trail after target | 1.32 | 50% | 0.74 | 21% | **hurts** |
+| scale-OUT (partial + trail rest) | 1.37 | 65% | 0.87 | 16% | slightly hurts |
+| **scale-IN on further weakness** | **1.46** | 68% | 0.97 | **14%** | small help |
+
+Answers to the three exit questions:
+1. **Trailing stops to let winners run — no.** Avg win rises ($49→$100+) but win
+   rate collapses (67%→50%); net PF and Sharpe fall, drawdown rises. Mean-reversion
+   winners don't trend; the tight exit-at-the-mean is already near-optimal.
+2. **Scale in as a trade goes your way — no** (that adds at *worse* reversion
+   odds). But scaling in on **further weakness** (deeper oversold, one add at
+   RSI<5) is the mean-reversion-consistent version and marginally helps:
+   PF 1.44→1.46, CAGR +0.7pts, DD 15%→14%.
+3. **Scale out (bank part, let rest run) — slightly no**; the trailed remainder
+   gives back gains (Sharpe 0.98→0.87).
+
+Takeaway: trailing/pyramiding/partials are a *trend-following* toolkit; on a
+mean-reversion system they subtract. "Letting winners run" requires a different
+(trend/breakout) strategy — which we already showed is dead on the instruments
+and timeframes available here.
+
 ## Honest limitations
 
 - Sharpe ~0.45 is real but modest; expect losing years (2017 −12.5% at 10% vol).
