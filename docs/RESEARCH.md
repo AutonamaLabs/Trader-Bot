@@ -292,6 +292,31 @@ single stocks). Treat the trend numbers as an upper bound until re-run on a
 survivorship-free universe incl. delisted names. Both sleeves are also long-only
 equities — a market crash hits both (trailing/fast exits cap it at ~16–28% DD).
 
+## Survivorship-bias reckoning (`scripts/validate_universe.py`)
+
+The two-sleeve numbers above use survivor universes (today's live tickers), which
+flatters everything. Re-tested on a genuinely **survivorship-free** universe (680
+names incl. delisted, point-in-time; teddykoker dataset) over the same 2013–2018
+window:
+
+| Universe (2013–2018) | Combo Sharpe | Combo CAGR | Max DD |
+|---|---|---|---|
+| 48 winners | 1.76 | +25% | 10% |
+| 110 broad survivors | 1.69 | +28% | 14% |
+| Survivorship-FREE, all 545 | **0.34** | +4% | 21% |
+| Survivorship-FREE, liquid ≥ $20 | 0.39 | +5% | — |
+| Survivorship-FREE, liquid ≥ $50 | **0.58** | +8.6% | — |
+
+**Conclusion: survivorship bias inflated the Sharpe from ~0.5 to ~1.7.** The edge
+is real but MUCH smaller than the survivor backtests implied — on bias-free,
+liquid, quality names it's ~Sharpe 0.5–0.6 / ~8% CAGR, not the headline 1.1. The
+strategy genuinely works better on higher-quality (higher-priced, liquid) names,
+and catches falling-knives/delistings in the full junk-inclusive universe. Any
+live expectation must be set from the survivorship-free liquid number (~0.5
+Sharpe), not the survivor backtest. Caveat on the caveat: this bias-free window is
+only ~4 years (2013–2018, a bull market); a point-in-time S&P 500 constituent
+test would sharpen it further.
+
 ## Honest limitations
 
 - Sharpe ~0.45 is real but modest; expect losing years (2017 −12.5% at 10% vol).
