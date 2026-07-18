@@ -212,6 +212,27 @@ compounding account, ≤10 concurrent, 1% risk/trade, 20% notional cap, 2004–2
 low-double-digit %/yr at ~25% max drawdown, best in bull regimes — real, and the
 first thing in this whole search that survives out-of-sample. Just not 10%/month.
 
+### Quality tuning — raising profit factor (`scripts/swing_sweep.py`)
+
+A grid sweep over entry depth / stop / exit / down-streak (ranked by profit
+factor, judged by *consistency* across the grid, not a single cell) found two
+principled, monotonic improvements — deeper oversold entry and exit at the mean:
+
+| Config | Portfolio PF | Sharpe | Max DD | SPY PF | QQQ PF |
+|---|---|---|---|---|---|
+| Original (RSI<15, exit RSI>65) | 1.26 | 0.80 | 26% | 1.77 | 1.82 |
+| **Tuned (RSI<10, exit RSI>50)** | **1.44** | **0.96** | **16%** | **2.04** | **2.12** |
+
+Confirmed on the survivorship-free indices (SPY/QQQ PF ~1.8 → ~2.0+), so it's a
+real quality gain, not a stock-selection artifact. Sized up to match the old
+return, the tuned config gives **CAGR ~11.9%, Sharpe 0.96, PF 1.40, DD ~22%** —
+strictly better than the original on every axis. The down-streak filter added
+nothing (redundant with deep RSI). These are now the canonical defaults.
+
+Remaining soft spot: the 2018–2024 sub-period is still weak (PF ~1.12) — a
+crash-regime/exposure overlay is the next lever, but the blanket SPY>200MA gate
+cut drawdown without lifting PF, so a more surgical filter is needed.
+
 ## Honest limitations
 
 - Sharpe ~0.45 is real but modest; expect losing years (2017 −12.5% at 10% vol).

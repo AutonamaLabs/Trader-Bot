@@ -67,6 +67,14 @@ def run(dirpath, args):
         idx = idx[idx >= pd.Timestamp(args.start, tz="UTC")]
     if args.end:
         idx = idx[idx <= pd.Timestamp(args.end, tz="UTC")]
+
+    # Market regime gate: only allow entries when a market proxy is healthy.
+    market_ok = np.ones(len(idx), bool)
+    if args.market_filter:
+        mkt = load_daily(Path(args.market_file))
+        mclose = mkt["close"].reindex(idx, method="ffill")
+        msma = mkt["close"].rolling(args.market_sma).mean().reindex(idx, method="ffill")
+        market_ok = (mclose > msma).to_numpy()
     # Cache per-symbol row dicts for O(1) access.
     cols = ["open", "high", "low", "close", "atr", "rsi", "long", "exit"]
     A = {s: {c: d[c].reindex(idx).to_numpy() for c in cols} for s, d in data.items()}
@@ -75,6 +83,7 @@ def run(dirpath, args):
     positions = {}                 # sym -> dict(entry, stop, shares, bars, risk$)
     pend_entry, pend_exit = {}, set()   # pend_entry: sym -> rsi at signal (rank key)
     eq_curve = np.empty(len(idx)); eq_curve[:] = np.nan
+    trade_pnls = []                # realized P&L per closed trade (for PF/win-rate)
 
     for i, dt in enumerate(idx):
         # ---- 1) manage open positions: stops intrabar (gap-aware) ----
@@ -89,7 +98,8 @@ def run(dirpath, args):
             elif lo <= p["stop"]:
                 hit = p["stop"]
             if hit is not None:
-                cash += (hit - p["entry"]) * p["shares"]
+                pnl = (hit - p["entry"]) * p["shares"]
+                cash += pnl; trade_pnls.append(pnl)
                 del positions[s]
 
         # ---- 2) pending exits (signal on prior close) at today's open ----
@@ -97,7 +107,8 @@ def run(dirpath, args):
             pend_exit.discard(s)
             if s in positions and not np.isnan(A[s]["open"][i]):
                 p = positions[s]
-                cash += (A[s]["open"][i] - p["entry"]) * p["shares"]
+                pnl = (A[s]["open"][i] - p["entry"]) * p["shares"]
+                cash += pnl; trade_pnls.append(pnl)
                 del positions[s]
 
         # ---- mark equity (cash + open unrealized at today's close) ----
@@ -139,16 +150,18 @@ def run(dirpath, args):
             if A[s]["exit"][i] or p["bars"] >= args.time_stop:
                 pend_exit.add(s)
         # entries: store RSI so tomorrow we fill the most-oversold first
-        for s in A:
-            if A[s]["long"][i] and s not in positions:
-                pend_entry[s] = A[s]["rsi"][i]
+        # (gated by the market regime filter, evaluated on the signal day)
+        if market_ok[i]:
+            for s in A:
+                if A[s]["long"][i] and s not in positions:
+                    pend_entry[s] = A[s]["rsi"][i]
         eq_curve[i] = marked()
 
     eq = pd.Series(eq_curve, index=idx).ffill().dropna()
-    report(eq, args)
+    report(eq, args, trade_pnls)
 
 
-def report(eq, args):
+def report(eq, args, trade_pnls=None):
     r = eq.pct_change().dropna()
     dd = (1 - eq / eq.cummax()).max()
     sharpe = np.sqrt(252) * r.mean() / r.std() if r.std() > 0 else 0
@@ -163,6 +176,12 @@ def report(eq, args):
     print(f"  CAGR            : {cagr*100:+.1f}%")
     print(f"  Max drawdown    : {dd*100:.1f}%")
     print(f"  Sharpe (daily)  : {sharpe:.2f}")
+    if trade_pnls:
+        t = np.array(trade_pnls)
+        wins, losses = t[t > 0], t[t < 0]
+        pf = wins.sum() / -losses.sum() if losses.sum() < 0 else float("inf")
+        print(f"  Trades          : {len(t)}   win {len(wins)/len(t)*100:.0f}%   "
+              f"profit factor {pf:.2f}   avg win ${wins.mean():.0f} / avg loss ${losses.mean():.0f}")
     print(f"  Monthly mean    : {monthly.mean()*100:+.2f}%   median {monthly.median()*100:+.2f}%   std {monthly.std()*100:.2f}%")
     print(f"  Positive months : {(monthly>0).mean()*100:.0f}%   best {monthly.max()*100:+.1f}%   worst {monthly.min()*100:+.1f}%")
     print(f"  Months >= +10%  : {(monthly>=0.10).mean()*100:.0f}%    >= +5%: {(monthly>=0.05).mean()*100:.0f}%")
@@ -180,10 +199,13 @@ def main():
     ap.add_argument("--max_notional", type=float, default=0.20, help="max notional/pos as frac of equity")
     ap.add_argument("--start", default=None, help="backtest start date (YYYY-MM-DD)")
     ap.add_argument("--end", default=None, help="backtest end date (YYYY-MM-DD)")
+    ap.add_argument("--market_filter", action="store_true", help="gate entries on market regime")
+    ap.add_argument("--market_file", default="data/swing/SPY.csv")
+    ap.add_argument("--market_sma", type=int, default=200)
     ap.add_argument("--sma", type=int, default=200)
     ap.add_argument("--rsi_n", type=int, default=3)
-    ap.add_argument("--rsi_lo", type=int, default=15)
-    ap.add_argument("--rsi_exit", type=int, default=65)
+    ap.add_argument("--rsi_lo", type=int, default=10)
+    ap.add_argument("--rsi_exit", type=int, default=50)
     ap.add_argument("--rv_spike", type=float, default=3.0)
     ap.add_argument("--sl_atr", type=float, default=3.0)
     ap.add_argument("--time_stop", type=int, default=10)

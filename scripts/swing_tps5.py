@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """TPS-5 — Trend-Pullback Swing (Fable design), multi-asset daily.
 
-Long-only: buy short-term weakness (RSI-3 oversold) inside a confirmed uptrend
-(Close > SMA200), skip vol spikes, exit into strength (RSI-3 > 65), regime abort
+Long-only: buy short-term weakness (RSI-3 < 10) inside a confirmed uptrend
+(Close > SMA200), skip vol spikes, exit into strength (RSI-3 > 50), regime abort
 (Close < SMA200), 3xATR stop, 10-day time stop. Tested on the RIGHT asset class
-for this anomaly: equity indices, gold, crypto — NOT FX majors.
+for this anomaly: equity indices, gold, crypto — NOT FX majors. Entry depth (10)
+and exit (50) were tuned for profit factor — see docs/RESEARCH.md.
 
 Reads daily OHLC CSVs from data/swing/<NAME>.csv (flexible header). Reports
 per-instrument and pooled stats, per-year, and the monthly return distribution.
@@ -54,7 +55,7 @@ def load_daily(path: Path) -> pd.DataFrame:
     return out.set_index("time")[["open", "high", "low", "close"]].astype(float)
 
 
-def signals(df, sma=200, rsi_n=3, rsi_lo=15, rsi_exit=65, rv_spike=3.0):
+def signals(df, sma=200, rsi_n=3, rsi_lo=10, rsi_exit=50, rv_spike=3.0):
     close = df["close"]
     sma200 = close.rolling(sma).mean()
     rsi = R.rsi(close, rsi_n)
@@ -92,8 +93,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sma", type=int, default=200)
     ap.add_argument("--rsi_n", type=int, default=3)
-    ap.add_argument("--rsi_lo", type=int, default=15)
-    ap.add_argument("--rsi_exit", type=int, default=65)
+    ap.add_argument("--rsi_lo", type=int, default=10)
+    ap.add_argument("--rsi_exit", type=int, default=50)
     ap.add_argument("--rv_spike", type=float, default=3.0)
     ap.add_argument("--sl_atr", type=float, default=3.0)
     ap.add_argument("--time_stop", type=int, default=10)
