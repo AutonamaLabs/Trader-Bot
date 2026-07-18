@@ -90,6 +90,15 @@ def adx(
     return wilder_rma(dx.fillna(0.0), period)
 
 
+def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """Wilder's RSI. Used by the equity mean-reversion sleeve (RSI-3)."""
+    delta = series.diff()
+    up = wilder_rma(delta.clip(lower=0), period)
+    down = wilder_rma((-delta).clip(lower=0), period)
+    rs = up / down.replace(0, np.nan)
+    return 100 - 100 / (1 + rs)
+
+
 def donchian(high: pd.Series, low: pd.Series, period: int = 20):
     """Donchian channel over the last ``period`` bars, EXCLUDING the current bar.
 
