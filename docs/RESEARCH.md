@@ -263,6 +263,35 @@ mean-reversion system they subtract. "Letting winners run" requires a different
 (trend/breakout) strategy — which we already showed is dead on the instruments
 and timeframes available here.
 
+## Two-sleeve system: mean-reversion + TREND (`scripts/trend_sleeve.py`)
+
+"Letting winners run" is a *trend-following* tool, so we built the trend sleeve
+it belongs to and paired it with mean-reversion. Trend sleeve = long-only
+Donchian breakout in a confirmed uptrend, ridden with a wide chandelier ATR
+trailing stop (here the trail *helps* — positive skew, 43% win rate, 2.7:1
+winners):
+
+| Sleeve (2004–2024, 48 stocks) | PF | Win% | CAGR | Sharpe | Max DD |
+|---|---|---|---|---|---|
+| Trend (Donchian-200, 3×ATR stop, 6×ATR trail) | **2.00** | 43% | +19.0% | 0.98 | 28% |
+| Mean-reversion (TPS-5, tuned + scale-in) | 1.47 | 68% | +9.4% | 0.98 | 16% |
+| **50/50 combined book** | — | — | **+14.0%** | **1.12** | **16%** |
+
+The combined Sharpe (1.12) beats either sleeve alone: they are only +0.43
+correlated and complementary across regimes — trend is strongest in **2018–2024
+(Sharpe 0.83)** exactly where mean-reversion is weakest (0.30), and vice-versa in
+choppy years. The trend sleeve is positive in every sub-period (2004–10 Sharpe
+0.77, 2011–17 1.29, 2018–24 0.83).
+
+**Caveat (important):** both sleeves run on today's 48 large-cap winners, so
+**survivorship bias inflates results — and it inflates the TREND sleeve more**
+(riding multi-year winners like AAPL/NVDA is exactly what a winners-only universe
+supplies). Mean-reversion was validated survivorship-free on SPY/QQQ; the trend
+sleeve has no equivalent bias-free check yet (indices don't "break out" like
+single stocks). Treat the trend numbers as an upper bound until re-run on a
+survivorship-free universe incl. delisted names. Both sleeves are also long-only
+equities — a market crash hits both (trailing/fast exits cap it at ~16–28% DD).
+
 ## Honest limitations
 
 - Sharpe ~0.45 is real but modest; expect losing years (2017 −12.5% at 10% vol).
