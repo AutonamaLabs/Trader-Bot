@@ -80,10 +80,12 @@ def run(dirpath, args):
     A = {s: {c: d[c].reindex(idx).to_numpy() for c in cols} for s, d in data.items()}
 
     cash = args.equity
-    positions = {}                 # sym -> dict(entry, stop, shares, bars, risk$)
+    positions = {}                 # sym -> dict(entry, stop, shares, bars, risk$, adds)
     pend_entry, pend_exit = {}, set()   # pend_entry: sym -> rsi at signal (rank key)
+    pend_add = set()               # syms to scale into (further weakness) at next open
     eq_curve = np.empty(len(idx)); eq_curve[:] = np.nan
     trade_pnls = []                # realized P&L per closed trade (for PF/win-rate)
+    scalein = not args.no_scalein
 
     for i, dt in enumerate(idx):
         # ---- 1) manage open positions: stops intrabar (gap-aware) ----
@@ -121,6 +123,21 @@ def run(dirpath, args):
             return m
         equity = marked()
 
+        # ---- 2c) scale-in adds (further weakness) at today's open ----
+        for s in list(pend_add):
+            pend_add.discard(s)
+            if s not in positions or np.isnan(A[s]["open"][i]) or np.isnan(A[s]["atr"][i]):
+                continue
+            p = positions[s]; op = A[s]["open"][i]; atr = A[s]["atr"][i]
+            add_sh = (args.risk * args.add_frac * equity) / (args.sl_atr * atr)
+            cap = args.max_notional * equity / op
+            add_sh = min(add_sh, max(0.0, cap - p["shares"]))
+            if add_sh <= 0:
+                continue
+            p["entry"] = (p["entry"] * p["shares"] + op * add_sh) / (p["shares"] + add_sh)
+            p["shares"] += add_sh; p["adds"] += 1
+            p["stop"] = min(p["stop"], op - args.sl_atr * atr)
+
         # ---- 3) pending entries at today's open, subject to caps ----
         open_risk = sum(p["risk"] for p in positions.values())
         for s in sorted(pend_entry, key=lambda x: pend_entry[x]):   # most oversold first
@@ -141,7 +158,8 @@ def run(dirpath, args):
             if shares > max_shares:
                 shares = max_shares
                 risk_dollars = shares * (entry - stop)
-            positions[s] = dict(entry=entry, stop=stop, shares=shares, bars=0, risk=risk_dollars)
+            positions[s] = dict(entry=entry, stop=stop, shares=shares, bars=0,
+                                 risk=risk_dollars, adds=0)
             open_risk += risk_dollars
         pend_entry = {}   # unfilled signals are discarded, not queued (per spec)
 
@@ -149,6 +167,8 @@ def run(dirpath, args):
         for s, p in positions.items():
             if A[s]["exit"][i] or p["bars"] >= args.time_stop:
                 pend_exit.add(s)
+            elif scalein and p["adds"] < args.max_adds and A[s]["rsi"][i] < args.add_thresh:
+                pend_add.add(s)
         # entries: store RSI so tomorrow we fill the most-oversold first
         # (gated by the market regime filter, evaluated on the signal day)
         if market_ok[i]:
@@ -202,6 +222,11 @@ def main():
     ap.add_argument("--market_filter", action="store_true", help="gate entries on market regime")
     ap.add_argument("--market_file", default="data/swing/SPY.csv")
     ap.add_argument("--market_sma", type=int, default=200)
+    # Scale-in on further weakness (confirmed small PF improvement; on by default).
+    ap.add_argument("--no_scalein", action="store_true", help="disable scale-in on weakness")
+    ap.add_argument("--add_thresh", type=int, default=5, help="add when RSI3 < this")
+    ap.add_argument("--max_adds", type=int, default=1)
+    ap.add_argument("--add_frac", type=float, default=1.0)
     ap.add_argument("--sma", type=int, default=200)
     ap.add_argument("--rsi_n", type=int, default=3)
     ap.add_argument("--rsi_lo", type=int, default=10)

@@ -34,7 +34,11 @@ from swing_sweep import precompute   # reuse one-time indicator precompute
 
 def simulate(A, idx, mode, *, rsi_lo=10, rsi_exit=50, sl_atr=3.0, time_stop=10,
              trail_atr=3.0, partial_frac=0.5, add_thresh=5, max_adds=1, add_frac=1.0,
+             be_trigger=0.0, be_offset=0.0,
              equity=5000, risk=0.01, max_pos=10, max_total=0.10, max_notional=0.20):
+    """be_trigger/be_offset: once favorable excursion >= be_trigger*R, raise the
+    stop to entry + be_offset*R (breakeven / minor-profit lock). R = initial stop
+    distance. Works on top of any mode."""
     L, X = {}, {}
     for s, d in A.items():
         L[s] = (d["close"] > d["sma"]) & d["calm"] & (d["rsi"] < rsi_lo)
@@ -64,6 +68,9 @@ def simulate(A, idx, mode, *, rsi_lo=10, rsi_exit=50, sl_atr=3.0, time_stop=10,
                 p["trailing"] = True
             if not np.isnan(hi):
                 p["ext"] = max(p["ext"], hi)
+            # breakeven / minor-profit lock once far enough in profit
+            if be_trigger > 0 and (p["ext"] - p["entry"]) >= be_trigger * p["R"]:
+                p["stop"] = max(p["stop"], p["entry"] + be_offset * p["R"])
             if use_trail and p.get("trailing") and not np.isnan(atr):
                 p["stop"] = max(p["stop"], p["ext"] - trail_atr * atr)
 
@@ -104,7 +111,8 @@ def simulate(A, idx, mode, *, rsi_lo=10, rsi_exit=50, sl_atr=3.0, time_stop=10,
             if sh > capsh:
                 sh = capsh; rd = sh * (entry - stop)
             pos[s] = dict(entry=entry, stop=stop, sh=sh, bars=0, risk=rd,
-                          ext=entry, adds=0, trailing=False, partialed=False)
+                          ext=entry, adds=0, trailing=False, partialed=False,
+                          R=entry - stop)
         pend_entry = {}
 
         # ---- 4) signals on today's close -> pending for next open ----
@@ -141,23 +149,43 @@ def _marked(cash, pos, A, i):
     return m
 
 
+def _row(label, r):
+    print(f"{label:<24}{r['pf']:>6.2f}{r['win']*100:>6.0f}{r['avgwin']:>7.0f}{r['avgloss']:>7.0f}"
+          f"{r['hold']:>6.1f}{r['cagr']*100:>+7.1f}{r['dd']*100:>6.0f}{r['sharpe']:>6.2f}{r['n']:>7}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", default="data/swing_stocks")
     ap.add_argument("--start", default="2004-01-01")
     ap.add_argument("--end", default=None)
     ap.add_argument("--risk", type=float, default=0.01)
-    ap.add_argument("--trail_atr", type=float, default=3.0)
     args = ap.parse_args()
     print("Loading + precomputing (once)...")
     A, idx = precompute(args.dir, args.start, args.end)
     print(f"{len(A)} symbols, {len(idx)} days {idx[0].date()}->{idx[-1].date()}\n")
-    modes = ["base", "trail_replace", "trail_after", "partial_trail", "scalein_weak", "combo"]
-    print(f"{'variant':<15}{'PF':>6}{'win%':>6}{'avgW':>7}{'avgL':>7}{'hold':>6}{'CAGR%':>7}{'DD%':>6}{'Shrp':>6}{'trades':>7}")
-    for m in modes:
-        r = simulate(A, idx, m, risk=args.risk, trail_atr=args.trail_atr)
-        print(f"{m:<15}{r['pf']:>6.2f}{r['win']*100:>6.0f}{r['avgwin']:>7.0f}{r['avgloss']:>7.0f}"
-              f"{r['hold']:>6.1f}{r['cagr']*100:>+7.1f}{r['dd']*100:>6.0f}{r['sharpe']:>6.2f}{r['n']:>7}")
+    hdr = f"{'variant':<24}{'PF':>6}{'win%':>6}{'avgW':>7}{'avgL':>7}{'hold':>6}{'CAGR%':>7}{'DD%':>6}{'Shrp':>6}{'trades':>7}"
+
+    print("== Reference ==\n" + hdr)
+    _row("base (exit@mean)", simulate(A, idx, "base", risk=args.risk))
+
+    print("\n== Trailing-stop WIDTH sweep (replace target exit; let winners run) ==\n" + hdr)
+    for t in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0):
+        _row(f"trail_replace {t}xATR", simulate(A, idx, "trail_replace", trail_atr=t, risk=args.risk))
+
+    print("\n== Trail AFTER target reached (bank the bounce, then ride) ==\n" + hdr)
+    for t in (2.0, 3.0, 4.0):
+        _row(f"trail_after {t}xATR", simulate(A, idx, "trail_after", trail_atr=t, risk=args.risk))
+
+    print("\n== Breakeven / minor-profit LOCK (keep exit@mean; protect reversals) ==\n" + hdr)
+    for trig, off in [(0.5, 0.0), (0.5, 0.1), (1.0, 0.0), (1.0, 0.25), (1.5, 0.5)]:
+        _row(f"belock @{trig}R ->+{off}R",
+             simulate(A, idx, "base", be_trigger=trig, be_offset=off, risk=args.risk))
+
+    print("\n== Best combo: exit@mean + scale-in weakness + belock ==\n" + hdr)
+    _row("scalein+belock@1R+0.25",
+         simulate(A, idx, "scalein_weak", add_thresh=5, max_adds=1,
+                  be_trigger=1.0, be_offset=0.25, risk=args.risk))
 
 
 def _finalize(eq, idx, pnls, holds):
