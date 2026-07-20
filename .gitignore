@@ -13,6 +13,7 @@ data/*.csv
 data/research/
 data/swing/
 data/swing_stocks/
+data/universe_pit/
 !data/.gitkeep
 results/
 *.log
