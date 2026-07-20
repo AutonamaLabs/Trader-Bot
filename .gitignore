@@ -15,6 +15,7 @@ data/swing/
 data/swing_stocks/
 data/universe_pit/
 data/funding/
+data/multi_asset/
 !data/.gitkeep
 results/
 *.log
