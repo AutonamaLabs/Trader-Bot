@@ -618,3 +618,140 @@ quoted first.
 - Next steps: add a carry sleeve (needs rate data), a value sleeve (PPP/real-rate),
   and de-correlate further; each additional robust, low-correlation sleeve is the
   legitimate way to push Sharpe up.
+
+## Diversified multi-asset trend-following (CTA-style)
+
+The FX-only trend attempts above (v1 Donchian, v2 momentum) all died — but that
+tested breakout/momentum on 2-3 correlated FX pairs, which is not how real CTAs
+(AHL, Winton, etc.) make money. Hurst/Ooi/Pedersen (AQR, 2017, "A Century of
+Evidence on Trend-Following Investing") show a **diversified** time-series
+momentum book — long/short every market by its own trailing trend, vol-scaled so
+no market dominates, averaged across dozens of weakly-correlated markets and
+FOUR asset classes — was positive in every decade back to 1880 across 67
+markets. The claimed mechanism is **breadth**, not any one market's edge. This
+section builds the real test: `scripts/trend_multi_asset.py`.
+
+### Data (`scripts/fetch_multi_asset.sh`)
+
+Same discipline as every other dataset here: WebSearch for candidate GitHub
+mirrors, `curl -sS -o /dev/null -w "%{http_code}"` to verify every URL before
+trusting it (Yahoo/Stooq/FRED/broker APIs are still 403 in this sandbox —
+re-verified, not just assumed). **37 markets, 4 asset classes:**
+
+| Asset class | Markets (n) | Source | Span |
+|---|---|---|---|
+| FX | AUD/CAD/CHF/GBP/JPY/NOK/NZD/SEK vs EUR + UUP (USD index) (9) | ECB daily reference rates (`data/research/ecb_daily.csv`, already in-repo) + scienclick/stocks | 1999–2026 (UUP: 2007–2017) |
+| Equity | SPY, QQQ, IWM, DIA, EFA, EEM, EWJ, EWG, EWU, EWQ, EWY (11) | already-in-repo SPY/QQQ + scienclick/stocks (Kaggle "Huge Stock Market Dataset" mirror, same family as `fetch_pit_universe.sh`'s source) | SPY 2000–2025; rest 2005–2017 |
+| Commodity | XAUUSD, WTI, Brent, natural gas, silver, copper, corn, wheat, soybeans, sugar, coffee, cotton (12) | already-in-repo XAUUSD + `datasets/oil-prices`, `datasets/natural-gas` (live to 2026) + scienclick/stocks | WTI 1986–2026, NatGas 1997–2026, rest 2005/2007–2017 |
+| Bond | TLT, IEF, SHY, BWX, IGOV (5) | scienclick/stocks | **2005–2017 only — no reachable source extends bonds past 2017 from this sandbox** (verified: FRED, Treasury, Stooq all 403; no working single-country Bund/Gilt/JGB CSV found on GitHub either) |
+
+**Honest caveat on breadth:** most of the equity/commodity/bond legs are ETF
+proxies from a dataset frozen at 2017-11-10, not continuously-adjusted futures
+(what real CTAs trade) — no roll yield, real financing cost, or futures margin
+efficiency is captured, and many "markets" here are correlated developed-market
+cap-weighted ETFs (SPY/QQQ/IWM/DIA/EFA/EWG/EWJ/EWU/EWQ all move together in a
+crash) rather than truly independent bets. 37 nominal markets is genuine
+progress over 2-3 FX pairs, but it is **not** AQR's 67-market, futures-native,
+137-year universe — this is a partial, proxy-based replication, reported as
+such.
+
+### Methodology
+
+Per market: `signal = sign(trailing 12-month return)`; `weight = signal ×
+(target_vol / ex-ante vol)` (EWM vol, 60-day halflife, annualised) — every
+market individually scaled to the same vol, so averaging is automatically
+equal-risk. Two-level combination: equal-weight markets within an asset class,
+then equal-weight the four (or three) class indices — equal risk **within and
+across** asset classes, as specified. Rebalanced monthly, weight decided at
+month-end close applied starting the *next* trading day only (no lookahead).
+Costs: 1bp FX, 2bp equity/bond, 6bp commodity (round-trip, charged on every
+rebalance-day weight change) — cheap for futures-like FX, wider for ETP
+proxies. One data-cleaning note: WTI printed **-$36.98 on 2020-04-20** (real
+contract-expiry mechanics, not a market move a trend system should "catch") —
+treated as a bad print (carried forward from the last valid price), not
+clipped to a small positive number (which would fake an enormous return the
+day price recovered).
+
+Because the bond data stops in 2017, two books are reported: **CORE** (all 4
+classes, common window bond-limited to 2005–2017) and **EXTENDED** (drop
+bonds, common window 1999–2026 via ECB FX + SPY + WTI/Brent/NatGas). Robustness
+checked across 12-month vs 1/3/12-month-blend signals × monthly vs weekly
+rebalance (4 combinations, all reported, no cherry-picking) on the EXTENDED
+book.
+
+### Results
+
+| Book | Window | Raw Sharpe | Vol-targeted 12% CAGR | maxDD |
+|---|---|---|---|---|
+| CORE (4 classes, incl. bonds) | 2005–2017 (12.7y) | **0.09** | +0.54% | 19.4% |
+| EXTENDED (3 classes, no bonds) | 1999–2026 (27.0y) | **0.24** | +2.38% | 21.6% |
+
+Per-class Sharpe (EXTENDED): equity **0.35**, commodity 0.07, fx 0.06 — nearly
+all the edge is coming from the equity trend leg (consistent with the
+already-validated equity trend sleeve elsewhere in this repo), FX and
+commodities are close to flat. CORE book adds bonds at Sharpe **-0.24** (a drag,
+not a diversifier, over 2005–2017). Asset-class correlations are genuinely low
+(0.01–0.22 pairwise) — the diversification premise holds structurally — but
+weak per-class Sharpes mean low correlation isn't rescuing the total.
+
+**Robustness (EXTENDED book, all 4 lookback×rebalance combos, unscaled):**
+
+| Lookback | Rebalance | Sharpe |
+|---|---|---|
+| 12-month | Monthly (selected) | 0.24 |
+| 12-month | Weekly | 0.14 |
+| 1/3/12-month blend | Monthly | 0.16 |
+| 1/3/12-month blend | Weekly | 0.08 |
+
+All four are positive but modest — no wild swings from the parameter choice
+(not an overfit-looking result), but also no combination gets anywhere close to
+AQR's reported Sharpe.
+
+**Crisis / sub-period behaviour (EXTENDED book):**
+
+| Period | Return | Sharpe | maxDD | Verdict |
+|---|---|---|---|---|
+| 2008 GFC (Jun'07–Jun'09) | +2.2% | **+0.31** | 6.9% | crisis alpha confirmed — trend caught the slow multi-month grind down |
+| 2020 COVID (Jan–Jun'20) | **-4.8%** | **-0.34** | 6.2% | **failed** — the crash was too fast (V-shaped); by the time 12-month momentum flipped short, the rebound had already started, and the strategy got whipsawed on both legs |
+| 2022 stock+bond selloff | +0.8% | +0.14 | 6.2% | modestly positive — trend caught the slower 2022 grind |
+
+This is an important, non-cherry-picked nuance on trend-following's "crisis
+alpha" reputation: it worked in the two *slow* crises (2008, 2022) and failed
+in the one *fast* one (2020) — exactly the documented real-world criticism of
+trend systems (many actual CTAs also had a mixed 2020 despite their crisis-alpha
+brand). Correlation to a naive 60/40 SPY/TLT benchmark over the CORE window is
+**-0.03** — genuinely uncorrelated, which is the one part of the CTA thesis that
+holds up cleanly here.
+
+### Verdict: does it clear a 4-5% bank-rate bar?
+
+**No.** Even the best-looking configuration (EXTENDED book, vol-targeted to
+12% annualised, 2× leverage cap) produces CAGR **+2.38%** at Sharpe **0.24** —
+below a plain savings account, and increasing leverage further to chase a
+higher CAGR just scales the 21.6% drawdown proportionally (a weak-Sharpe book
+does not become a strong one by adding leverage). The CORE (bond-inclusive) book
+is worse still: CAGR +0.54%, Sharpe 0.09 — essentially noise.
+
+This is also **weaker than the already-validated equity two-sleeve system**
+in this repo (survivorship-free: Sharpe 0.34–0.58, CAGR 4–8.6%, PF ~1.19–1.47)
+on every axis. The honest reasons: (1) the equity/commodity/bond legs here are
+mostly ETF proxies frozen at 2017, not continuously-linked futures, so real
+CTA cost/roll efficiencies aren't captured; (2) 37 correlated-ETF markets is not
+67 genuinely-independent futures markets — the AQR breadth thesis needs more,
+and more truly independent, markets than this sandbox's reachable data sources
+supply; (3) a plain 12-month-momentum-with-inverse-vol-sizing signal is the
+simplest form of the strategy — no attempt was made to squeeze more out of it
+(matching the "don't overfit" constraint), so this is a lower bound on how well
+a *carefully engineered* CTA implementation could do, not a ceiling.
+
+**Bottom line: real breadth (4 asset classes, uncorrelated legs, -0.03
+correlation to 60/40) was assembled and honestly tested, and the classic
+"trend does well in slow crashes" pattern shows up in 2008/2022 — but the
+risk-adjusted return (Sharpe 0.09-0.24) is too weak, after realistic costs and
+with the data actually reachable from this sandbox, to beat a savings account
+or to rival this repo's existing validated equity edge. If a live futures/data
+feed with a genuinely broad (60+), long-history, continuously-rolled contract
+universe becomes available, this methodology is worth re-testing — the
+structural low-correlation result is real and the method is directionally
+correct; the data available here is simply too narrow and too proxy-heavy to
+prove the full CTA case.

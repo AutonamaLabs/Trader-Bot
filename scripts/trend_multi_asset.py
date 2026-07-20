@@ -47,10 +47,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from trader_bot import research as R
 from swing_tps5 import load_daily
 
-FX_DIR = ROOT / "data" / "research" / "raw"
 SWING_DIR = ROOT / "data" / "swing"
 MULTI_DIR = ROOT / "data" / "multi_asset"
 ECB_CSV = ROOT / "data" / "research" / "ecb_daily.csv"
@@ -184,7 +182,6 @@ def market_book(close: pd.Series, lookback: str, inst_vol: float,
         empty = pd.Series(dtype=float)
         return empty, empty
     step = pd.Series(np.nan, index=close.index)
-    last_val = np.nan
     reb_set = set()
     for d in rebal_dates:
         idx_pos = avail.searchsorted(d, side="right") - 1
@@ -222,9 +219,12 @@ def build_portfolio(universe: dict, lookback: str, rebalance: str,
         close = close[~close.index.duplicated()]
         # Guard against one-off data anomalies (e.g. WTI front-month futures
         # traded at -$36.98 on 2020-04-20, a real but mechanically-driven
-        # settlement quirk) blowing up log/pct returns into NaN or absurd
-        # outliers. A small positive floor is standard practice for this.
-        close = close.clip(lower=0.01)
+        # expiry/settlement quirk unique to that contract, not a market move
+        # a trend-following system is meant to capture). Clipping to a small
+        # positive floor would create a fake near-infinite return the next
+        # time price recovers, so instead treat the single bad print as
+        # missing data and carry the last good price forward one day.
+        close = close.mask(close <= 0).ffill()
         if len(close) < 320:
             continue
         simple_ret, weight = market_book(close, lookback, inst_vol, rebalance)
@@ -296,6 +296,7 @@ def build_60_40(universe: dict) -> pd.Series | None:
 def sub_period(ret: pd.Series, start, end, label):
     s = ret.loc[start:end]
     if len(s) < 10:
+        print(f"  {label:<28}  NO DATA in this window (universe not live then)")
         return None
     st = stats(s)
     print(f"  {label:<28}{st['cagr']*100:>+8.1f}%  Sharpe {st['sharpe']:>6.2f}  "
@@ -303,95 +304,112 @@ def sub_period(ret: pd.Series, start, end, label):
     return st
 
 
+def report_book(universe: dict, label: str, lookback: str, rebalance: str, inst_vol: float,
+                 crisis_windows: list, show_class_breakdown: bool = True):
+    portfolio_full, class_df, _R_df, classes, (common_start, common_end) = build_portfolio(
+        universe, lookback, rebalance, inst_vol)
+    print(f"\n{'='*74}\n  {label}\n{'='*74}")
+    print(f"  Common overlap window (every included asset class simultaneously live): "
+          f"{common_start.date()} .. {common_end.date()}")
+    portfolio = portfolio_full.loc[common_start:common_end]
+
+    st = stats(portfolio)
+    print(f"\n  Raw (unscaled) book:        CAGR {st['cagr']*100:+6.2f}%  Sharpe {st['sharpe']:.2f}  "
+          f"maxDD {st['maxdd']*100:5.1f}%  span {st['yrs']:.1f}y  n={st['n']}")
+    scaled = vol_target_scale(portfolio, target=0.12, lev_cap=2.0)
+    sst = stats(scaled)
+    print(f"  Vol-targeted 12% (2x cap):  CAGR {sst['cagr']*100:+6.2f}%  Sharpe {sst['sharpe']:.2f}  "
+          f"maxDD {sst['maxdd']*100:5.1f}%")
+
+    if show_class_breakdown:
+        print("\n  Per-asset-class sub-index (equal-risk within class):")
+        for cls in sorted(class_df.columns):
+            cst = stats(class_df[cls].loc[common_start:common_end])
+            print(f"    {cls:<10} CAGR {cst['cagr']*100:+6.2f}%  Sharpe {cst['sharpe']:.2f}  "
+                  f"maxDD {cst['maxdd']*100:5.1f}%  markets={len(classes[cls])}")
+        corr = class_df.loc[common_start:common_end].corr()
+        print("\n  Asset-class correlation matrix:")
+        print("  " + corr.round(2).to_string().replace("\n", "\n  "))
+
+    print("\n  Sub-period / crisis behaviour:")
+    for start, end, wlabel in crisis_windows:
+        sub_period(portfolio_full, start, end, wlabel)
+
+    return portfolio, sst, common_start, common_end
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--lookback", choices=["12m", "blend"], default="12m")
     ap.add_argument("--rebalance", choices=["M", "W"], default="M")
     ap.add_argument("--inst-vol", type=float, default=0.10)
-    ap.add_argument("--start", default=None)
     args = ap.parse_args()
 
     universe = build_universe()
     n_classes = len(set(v["asset_class"] for v in universe.values()))
     print("=" * 74)
     print(f"  Diversified multi-asset trend-following (CTA-style)")
-    print(f"  Universe: {len(universe)} markets across {n_classes} asset classes")
+    print(f"  Full universe: {len(universe)} markets across {n_classes} asset classes")
     by_class = {}
     for sym, info in universe.items():
         by_class.setdefault(info["asset_class"], []).append(sym)
     for cls, syms in sorted(by_class.items()):
         print(f"    {cls:<10} ({len(syms)}): {', '.join(sorted(syms))}")
-    print("=" * 74)
 
-    portfolio_full, class_df, R_df, classes, (common_start, common_end) = build_portfolio(
-        universe, args.lookback, args.rebalance, args.inst_vol)
-
-    print(f"\n  Common overlap window (ALL asset classes simultaneously live): "
-          f"{common_start.date()} .. {common_end.date()}")
-    # Headline stats use the fully-overlapping multi-asset-class window — this
-    # is the only period where the portfolio is genuinely diversified across
-    # every class every day; outside it, fewer classes are live and the
-    # portfolio return quietly narrows to whichever classes exist that day.
-    portfolio = portfolio_full.loc[common_start:common_end]
-    if args.start:
-        portfolio = portfolio.loc[args.start:]
-
-    st = stats(portfolio)
-    print(f"\n== Headline (common window only): lookback={args.lookback} "
-          f"rebalance={args.rebalance} inst_vol={args.inst_vol*100:.0f}% ==")
-    print(f"  Raw (unscaled) book:  CAGR {st['cagr']*100:+6.2f}%  Sharpe {st['sharpe']:.2f}  "
-          f"maxDD {st['maxdd']*100:5.1f}%  span {st['yrs']:.1f}y  n={st['n']}")
-
-    scaled = vol_target_scale(portfolio, target=0.12, lev_cap=2.0)
-    sst = stats(scaled)
-    print(f"  Vol-targeted 12% (2x cap): CAGR {sst['cagr']*100:+6.2f}%  Sharpe {sst['sharpe']:.2f}  "
-          f"maxDD {sst['maxdd']*100:5.1f}%")
-
-    print("\n== Per-asset-class sub-index (equal-risk within class) ==")
-    for cls in sorted(class_df.columns):
-        cst = stats(class_df[cls])
-        print(f"  {cls:<10} CAGR {cst['cagr']*100:+6.2f}%  Sharpe {cst['sharpe']:.2f}  "
-              f"maxDD {cst['maxdd']*100:5.1f}%  markets={len(classes[cls])}")
-
-    corr = class_df.corr()
-    print("\n== Asset-class correlation matrix ==")
-    print(corr.round(2).to_string())
+    # CORE book: all 4 asset classes including bonds. Bonds only have reachable
+    # data through 2017-11-10 (see fetch_multi_asset.sh), so this book's common
+    # window is bond-limited — but it DOES cover the 2008 GFC. (2020/2022 are
+    # NOT shown here: bonds aren't live then, so those numbers would just be
+    # a relabeled copy of the EXTENDED book's — shown once, below, instead.)
+    core_port, core_sst, cs, ce = report_book(
+        universe, "CORE BOOK (FX + equity + commodity + bond)",
+        args.lookback, args.rebalance, args.inst_vol,
+        [("2007-06-01", "2009-06-30", "2008 GFC crash (bonds live)")])
 
     bench = build_60_40(universe)
     if bench is not None:
-        common = portfolio.index.intersection(bench.index)
-        bst = stats(bench.reindex(common))
-        pc = portfolio.reindex(common).corr(bench.reindex(common))
-        print(f"\n== vs 60/40 SPY/bond benchmark ==")
-        print(f"  60/40   CAGR {bst['cagr']*100:+6.2f}%  Sharpe {bst['sharpe']:.2f}  maxDD {bst['maxdd']*100:5.1f}%")
-        print(f"  Correlation (trend vs 60/40): {pc:+.2f}")
-    else:
-        print("\n(no bond series available — 60/40 benchmark and crisis-alpha check vs bonds skipped)")
+        common = core_port.index.intersection(bench.index)
+        if len(common) > 50:
+            bst = stats(bench.reindex(common))
+            pc = core_port.reindex(common).corr(bench.reindex(common))
+            print(f"\n  vs 60/40 SPY/TLT benchmark ({common[0].date()}..{common[-1].date()}):")
+            print(f"    60/40 CAGR {bst['cagr']*100:+6.2f}%  Sharpe {bst['sharpe']:.2f}  maxDD {bst['maxdd']*100:5.1f}%")
+            print(f"    Correlation (trend vs 60/40): {pc:+.2f}")
 
-    print("\n== Sub-period / crisis behaviour ==")
-    for start, end, label in [
-        ("2007-06-01", "2009-06-30", "2008 GFC crash"),
-        ("2020-01-01", "2020-06-30", "2020 COVID crash"),
-        ("2022-01-01", "2022-12-31", "2022 stock+bond selloff"),
-    ]:
-        sub_period(portfolio, start, end, label)
+    # EXTENDED book: drop bonds (no source past 2017 was reachable from this
+    # sandbox — see fetch_multi_asset.sh) to get a MUCH longer common window
+    # via ECB FX (1999-2026) + SPY (2000-2025) + WTI/Brent/NatGas (1986/97-2026)
+    # + XAUUSD (2012-2022), so 2020 and 2022 can actually be tested.
+    ex_bonds = {k: v for k, v in universe.items() if v["asset_class"] != "bond"}
+    ext_port, ext_sst, ecs, ece = report_book(
+        ex_bonds, "EXTENDED BOOK (FX + equity + commodity, NO bonds — longer span)",
+        args.lookback, args.rebalance, args.inst_vol,
+        [("2007-06-01", "2009-06-30", "2008 GFC crash"),
+         ("2020-01-01", "2020-06-30", "2020 COVID crash"),
+         ("2022-01-01", "2022-12-31", "2022 stock+bond selloff")])
 
-    print("\n== Robustness: lookback/rebalance variants (no cherry-picking — all shown) ==")
+    print(f"\n{'='*74}\n  Robustness: lookback/rebalance variants on the EXTENDED book\n"
+          f"  (no cherry-picking — every combination shown)\n{'='*74}")
     for lb in ("12m", "blend"):
         for rb in ("M", "W"):
-            if lb == args.lookback and rb == args.rebalance:
-                continue
             try:
-                p2, _, _, _ = build_portfolio(universe, lb, rb, args.inst_vol)
-                s2 = stats(p2)
-                print(f"  lookback={lb:<6} rebalance={rb}  CAGR {s2['cagr']*100:+6.2f}%  "
-                      f"Sharpe {s2['sharpe']:.2f}  maxDD {s2['maxdd']*100:5.1f}%")
+                p2, _, _, _, (s2, e2) = build_portfolio(ex_bonds, lb, rb, args.inst_vol)
+                p2 = p2.loc[s2:e2]
+                st2 = stats(p2)
+                tag = "  <- selected headline" if (lb == args.lookback and rb == args.rebalance) else ""
+                print(f"  lookback={lb:<6} rebalance={rb}  CAGR {st2['cagr']*100:+6.2f}%  "
+                      f"Sharpe {st2['sharpe']:.2f}  maxDD {st2['maxdd']*100:5.1f}%{tag}")
             except Exception as e:
                 print(f"  lookback={lb} rebalance={rb}: FAILED ({e})")
 
-    print("\n== Bank-rate comparison ==")
-    print(f"  ~4-5% risk-free bank savings rate vs raw CAGR {st['cagr']*100:+.2f}% "
-          f"/ vol-targeted CAGR {sst['cagr']*100:+.2f}% (Sharpe {sst['sharpe']:.2f})")
+    core_scaled_stats = core_sst
+    ext_scaled_stats = ext_sst
+    print(f"\n{'='*74}\n  Bank-rate comparison\n{'='*74}")
+    print(f"  ~4-5% risk-free bank savings rate")
+    print(f"  CORE (4-class, vol-targeted 12%):     CAGR {core_scaled_stats['cagr']*100:+.2f}%  "
+          f"Sharpe {core_scaled_stats['sharpe']:.2f}  maxDD {core_scaled_stats['maxdd']*100:.1f}%")
+    print(f"  EXTENDED (3-class, vol-targeted 12%): CAGR {ext_scaled_stats['cagr']*100:+.2f}%  "
+          f"Sharpe {ext_scaled_stats['sharpe']:.2f}  maxDD {ext_scaled_stats['maxdd']*100:.1f}%")
 
 
 if __name__ == "__main__":
