@@ -317,6 +317,130 @@ Sharpe), not the survivor backtest. Caveat on the caveat: this bias-free window 
 only ~4 years (2013–2018, a bull market); a point-in-time S&P 500 constituent
 test would sharpen it further.
 
+## Point-in-time S&P 500 validation (2000-2024)
+
+The 2013-2018 survivorship-free result above is the strongest evidence so far
+that the MR sleeve is real, but a Fable review flagged the obvious gap: it's a
+single ~4-year window that never touches a real bear market, and it uses
+*today's* index membership even for the survivorship-free universe (a name
+that IPO'd in 2019 shouldn't be tradable in 2013). This section re-tests
+2000–2024 — spanning the 2008 GFC, the 2020 COVID crash, and the 2022 bear —
+using **point-in-time S&P 500 constituents**: a symbol is only a legal NEW
+entry on dates it was an actual index member, never in hindsight.
+
+**Sourcing (sandbox network only reaches raw.githubusercontent.com / github.com
+git clone; Yahoo, Stooq, FRED, Quandl/Nasdaq Data Link all return 403):**
+
+- **Membership** — [hanshof/sp500_constituents](https://github.com/hanshof/sp500_constituents),
+  a daily point-in-time constituent list, 1996-01-02 to present, one row per
+  membership-change date. Reachable directly via raw.githubusercontent.com.
+  This is genuine, not reconstructed — 1,006 distinct tickers were S&P 500
+  members at some point between 2000 and 2024.
+- **Prices** — no free, fully delisted-inclusive daily-OHLC source for ~1,000
+  tickers back to 2000 was reachable (Quandl's WIKI Prices, the standard free
+  answer to this exact problem, was killed in 2018 and its raw CSV isn't
+  mirrored anywhere reachable here). The best available compromise, spliced
+  from two sources per symbol:
+  - **2000 → 2017-11-10:** a GitHub mirror of the Kaggle "Huge Stock Market
+    Dataset" ([neo-zhao/CMSC320_Final_Tutorial_Huge_Stock_Market_Dataset](https://github.com/neo-zhao/CMSC320_Final_Tutorial_Huge_Stock_Market_Dataset),
+    itself sourced from Stooq's bulk EOD archive). Split-adjusted, not
+    dividend-adjusted, ~7,000 tickers, **and it does carry many since-delisted
+    names** (e.g. Wachovia-era ticker WB, Circuit-City-era ticker CC) that a
+    current-constituents-only source would miss.
+  - **2017-11-10 → 2024-12-06:** `data/universe_broad/` (already in this repo,
+    dividend+split adjusted), for the subset of names still trading under the
+    same ticker.
+  - Where both exist, the pre-2017 leg is rescaled by one constant factor so
+    the switchover day carries ~0% fabricated return (like a back-adjusted
+    continuous futures contract) — see `scripts/prepare_pit_universe.py`.
+  - **710 of the 1,006 point-in-time tickers** were recoverable this way; 296
+    were not (mostly bankruptcy-suffix tickers like AAMRQ/ABKFQ/BTUUQ/CCTYQ —
+    genuine total losses the Stooq mirror itself doesn't carry either — plus
+    names that took their current ticker only after the 2017 cutoff, e.g.
+    BKNG, CARR, AMCR).
+  - **Known limitation — ticker recycling:** a free, symbol-only dataset can't
+    fully rule out a ticker being reused by an unrelated company decades
+    later (WB and CC above are themselves examples: today's WB is Weibo, not
+    Wachovia; today's CC is a different, more recent listing). This affects
+    an unknown but likely small share of the 710 matched names.
+
+Reproduce: `scripts/fetch_pit_universe.sh` → `scripts/prepare_pit_universe.py`
+→ `scripts/validate_pit_universe.py --risk 0.01` (adds a point-in-time
+membership gate on top of `scripts/swing_sweep.py`'s engine; open positions
+are allowed to run to their normal exit even if the name leaves the index
+mid-trade, and a position is force-closed at its last available price if the
+underlying data source's coverage ends mid-trade — only 11 of 5,703 trades,
+0.2%, hit that branch).
+
+**MR sleeve only** (risk_per_trade=0.01, `rsi_lo=10, sl_atr=3.0, rsi_exit=50`
+— the trend sleeve isn't included here; it has no equivalent point-in-time
+check yet):
+
+| Period | CAGR | Sharpe | Max DD | Profit factor | Win rate | Trades |
+|---|---|---|---|---|---|---|
+| **Full 2000–2024** | **+9.3%** | **0.76** | 25% | 1.22 | 63% | 5,703 |
+| 2000–2007 | +13.2% | 0.98 | 25% | 1.28 | 64% | 2,324 |
+| 2008–2009 (GFC) | +5.4% | 0.58 | 14% | 1.24 | 62% | 310 |
+| 2010–2019 | +11.0% | 0.79 | 25% | 1.24 | 63% | 2,632 |
+| 2020 (COVID) | −0.1% | 0.01 | 6% | 0.99 | 55% | 65 |
+| 2021–2022 (bear) | +2.4% | 0.41 | 6% | 1.16 | 57% | 183 |
+| 2023–2024 | +0.8% | 0.17 | 7% | 1.05 | 60% | 189 |
+
+**This still overstates the edge — and we can prove it.** Re-running the exact
+same point-in-time universe restricted to the original teddykoker window
+(2013-06-01 → 2018-02-27) gives MR-only Sharpe **0.90**, CAGR +13.8%. But the
+true survivorship-free (teddykoker, genuinely delisted-inclusive) universe on
+that identical window gives MR-only Sharpe **0.25**, CAGR +2.9% (re-run here
+for a clean apples-to-apples MR-only number; the previously-published 0.34 was
+the 50/50 trend+MR combo, which is higher because the two sleeves diversify
+each other). That's a >3x Sharpe gap on the *same dates, same strategy,
+same point-in-time membership gating* — the only difference is the price
+source. **Conclusion: fixing the membership-timing lookahead is necessary but
+not sufficient.** The Stooq/HSMD mirror is missing exactly the true
+bankruptcies (the Q-suffix tickers) that the CRSP-style teddykoker dataset
+keeps, so this composite universe is still meaningfully survivorship-biased —
+just less obviously than a naive "today's constituents" backtest.
+
+**Reading the table honestly, then:**
+
+- Treat the 2000–2024 numbers above as an **upper bound**, not the true
+  answer. The true Sharpe is very likely closer to the previously-established
+  survivorship-free range (0.25–0.58) than to 0.76, and given the demonstrated
+  gap, plausibly below the low end of that range for the post-2018 years
+  specifically.
+- The edge's shape across regimes is nonetheless informative even at reduced
+  confidence: it works reasonably well pre-2018 in this (upper-bound) test,
+  including a positive Sharpe through the 2008 GFC, and **degrades sharply
+  from 2020 onward** — COVID is a wash (Sharpe 0.01) and 2021–2024 stay weak
+  (0.17–0.41) even before the residual survivorship-bias correction above is
+  applied. Once that correction is applied, 2020–2024 performance is a
+  realistic candidate for **net-negative**, not just weak.
+- The 2020–2024 readings carry a second, compounding caveat: only 103 of the
+  710 priced tickers (the ones present in `data/universe_broad/`) have any
+  price data past 2017-11-10, so those sub-periods trade a much narrower,
+  more concentrated, large-cap-survivor-tilted universe than 2000–2017 does —
+  both less diversified and more exposed to the exact bias this section set
+  out to remove.
+- A liquidity cut (drop symbols with all-time median close < $20, mirroring
+  the earlier ≥$20/≥$50 cuts) does **not** rescue this: full-period Sharpe
+  0.73 (barely changed), but 2008–2009 Sharpe drops to 0.19 and 2023–2024
+  turns negative (Sharpe −0.28, PF 0.88) — unlike the 2013-2018 study, a
+  liquidity filter does not reliably improve results here.
+
+**Bottom line: the edge does not clearly survive point-in-time validation
+across real bear markets.** It looks fine through the 2008 GFC in this
+upper-bound test, but the already-weak 2020–2024 numbers are almost certainly
+overstated by residual survivorship bias in the only reachable free price
+source, and the true recent performance is a plausible candidate for flat or
+negative. This does not overturn the 2013-2018 survivorship-free finding — it
+sharpens it in the direction that finding already pointed: real-account
+expectations should anchor on the low end of the 0.25–0.58 Sharpe range
+established earlier, not on the more optimistic multi-decade number in the
+table above. A genuinely delisted-inclusive, dividend-adjusted daily-OHLC
+dataset for the full ~1,000-name universe back to 2000 (CRSP, Norgate, or
+equivalent paid data) is needed to close this out properly; it was not
+obtainable for free in this sandbox.
+
 ## Honest limitations
 
 - Sharpe ~0.45 is real but modest; expect losing years (2017 −12.5% at 10% vol).

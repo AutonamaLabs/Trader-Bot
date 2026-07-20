@@ -76,7 +76,25 @@ def simulate_pit(A, idx, membership, rsi_lo=10, sl_atr=3.0, rsi_exit=50,
     ~3-4 days on average, so this grace period is realistic and doesn't model
     forced-liquidation-on-deletion, which the underlying strategy doesn't
     otherwise represent). Returns the daily equity curve plus a (date, pnl)
-    list per closed trade so results can be sliced by sub-period."""
+    list per closed trade so results can be sliced by sub-period.
+
+    Data-coverage cutoff handling: 600 of the 710 priced symbols only have
+    data to ~2017-11-10 (the free HSMD mirror's cutoff, see
+    scripts/fetch_pit_universe.sh) and then simply go NaN forever. Without
+    special handling, any position still open at that point would sit
+    "frozen" forever (skipped every day because its price is NaN), which both
+    silently drops it from realized P&L AND permanently occupies one of the
+    max_pos slots -- eventually stalling the whole simulation once enough
+    zombie positions accumulate. Instead we force-close a position at its
+    LAST valid close the day coverage disappears. This likely modestly
+    overstates outcomes for names that vanished because of an actual
+    bankruptcy (true liquidation recovery is often near zero, not "last
+    quoted price"), but that is far more honest than a silent lockup -- and
+    the effect is bounded to the < 4% of trades that hit this branch below.
+    """
+    last_valid_i = {s: int(np.nanmax(np.where(~np.isnan(d["close"]))[0]))
+                     if np.any(~np.isnan(d["close"])) else -1
+                     for s, d in A.items()}
     L, X = {}, {}
     for s, d in A.items():
         base_long = (d["close"] > d["sma"]) & d["calm"] & (d["rsi"] < rsi_lo)
@@ -87,6 +105,7 @@ def simulate_pit(A, idx, membership, rsi_lo=10, sl_atr=3.0, rsi_exit=50,
     positions: dict = {}
     pe, px = {}, set()
     trades: list[tuple] = []  # (close_date, pnl)
+    coverage_end_closes = 0
     eq = np.empty(len(idx)); eq[:] = np.nan
     for i in range(len(idx)):
         for s in list(positions):
@@ -103,6 +122,14 @@ def simulate_pit(A, idx, membership, rsi_lo=10, sl_atr=3.0, rsi_exit=50,
             if s in positions and not np.isnan(A[s]["open"][i]):
                 p = positions[s]; v = (A[s]["open"][i] - p["entry"]) * p["sh"]
                 cash += v; trades.append((idx[i], v)); del positions[s]
+        # Force-close any survivor whose price data ends today (see docstring).
+        for s in list(positions):
+            if i == last_valid_i.get(s, -1):
+                p = positions[s]; c = A[s]["close"][i]
+                if not np.isnan(c):
+                    v = (c - p["entry"]) * p["sh"]; cash += v
+                    trades.append((idx[i], v)); del positions[s]
+                    coverage_end_closes += 1
 
         def marked():
             m = cash
@@ -137,7 +164,7 @@ def simulate_pit(A, idx, membership, rsi_lo=10, sl_atr=3.0, rsi_exit=50,
                 pe[s] = A[s]["rsi"][i]
         eq[i] = marked()
     eqs = pd.Series(eq, index=idx).ffill().dropna()
-    return eqs, trades
+    return eqs, trades, coverage_end_closes
 
 
 def period_stats(eqs: pd.Series, trades: list, start=None, end=None):
@@ -171,10 +198,18 @@ def main():
     ap.add_argument("--rsi_lo", type=int, default=10)
     ap.add_argument("--sl_atr", type=float, default=3.0)
     ap.add_argument("--rsi_exit", type=int, default=50)
+    ap.add_argument("--min_price", type=float, default=0.0,
+                     help="drop symbols whose all-time median close is below this "
+                          "(liquidity/quality cut, mirrors the ≥$20 / ≥$50 cuts in "
+                          "the original 2013-2018 survivorship-free comparison)")
     args = ap.parse_args()
 
     print("Loading + precomputing indicators (once)...")
     A, idx = SW.precompute(args.dir, args.start, args.end)
+    if args.min_price > 0:
+        before = len(A)
+        A = {s: d for s, d in A.items() if np.nanmedian(d["close"]) >= args.min_price}
+        print(f"min_price={args.min_price}: kept {len(A)}/{before} symbols")
     print(f"{len(A)} symbols, {len(idx)} days  {idx[0].date()} -> {idx[-1].date()}")
 
     print("Loading point-in-time S&P 500 membership...")
@@ -182,9 +217,11 @@ def main():
     matched = len(set(A) & set(membership))
     print(f"{matched}/{len(A)} priced symbols matched in the membership file\n")
 
-    eqs, trades = simulate_pit(A, idx, membership, rsi_lo=args.rsi_lo,
-                                sl_atr=args.sl_atr, rsi_exit=args.rsi_exit,
-                                risk=args.risk)
+    eqs, trades, coverage_end_closes = simulate_pit(
+        A, idx, membership, rsi_lo=args.rsi_lo, sl_atr=args.sl_atr,
+        rsi_exit=args.rsi_exit, risk=args.risk)
+    print(f"{coverage_end_closes} of {len(trades)} trades ({coverage_end_closes/len(trades)*100:.1f}%) "
+          "were force-closed at last-available price when a symbol's data coverage ended mid-trade\n")
 
     print("=" * 78)
     print(f"  POINT-IN-TIME S&P 500 MR SLEEVE  (risk={args.risk}, "
