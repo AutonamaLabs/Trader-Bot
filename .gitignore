@@ -14,6 +14,7 @@ data/research/
 data/swing/
 data/swing_stocks/
 data/universe_pit/
+data/funding/
 !data/.gitkeep
 results/
 *.log

@@ -441,6 +441,171 @@ dataset for the full ~1,000-name universe back to 2000 (CRSP, Norgate, or
 equivalent paid data) is needed to close this out properly; it was not
 obtainable for free in this sandbox.
 
+## Crypto funding-rate arbitrage — feasibility and backtest
+
+A fundamentally different edge type was requested: **market-neutral** crypto
+cash-and-carry (long spot BTC/ETH, short the same-notional perpetual future,
+collect the funding payment). Unlike everything above, this does not bet on
+price direction — so it was worth testing on its own terms, but "market-neutral"
+turns out **not** to mean "risk-free," which is the main finding.
+
+### Data
+
+Exchange REST APIs (Binance `fapi`, Bybit, OKX, Deribit, CoinGecko) all
+returned `403`/connection-refused from this sandbox on a fresh direct test —
+confirming the standing constraint that only `raw.githubusercontent.com` (and,
+it turns out, the agent's own web-search/fetch tools) are reachable. Real
+historical funding-rate data was located and verified on the public GitHub
+mirror
+[supervik/historical-funding-rates-fetcher](https://github.com/supervik/historical-funding-rates-fetcher),
+which scraped each exchange's own funding-history endpoint:
+
+- **BTC-USDT and ETH-USDT funding-rate history**, 8h settlements, **Binance,
+  Bybit, Gate.io**, 2020-01-01 → 2023-12-31 (Bybit from 2021-01-01) —
+  `scripts/fetch_funding_data.sh` → `data/funding/`.
+- **Spot daily close**, reused from `data/swing/BTCUSD.csv` / `ETHUSD.csv`
+  (already in-repo). Also used as a *proxy* for perp mark price for the
+  liquidation-risk check, since no separate perp OHLC series is reachable
+  here — flagged explicitly below, and it likely **understates** true risk
+  (real perp prices can gap further from spot in a basis blowout).
+
+This is a real 4-year sample spanning very different regimes: the 2020 COVID
+crash, the 2020–21 bull run, the 2022 bear market (Terra/LUNA May 2022, FTX
+collapse Nov 2022), and the 2023 recovery — exactly the regime diversity this
+project's methodology requires. `scripts/funding_arb.py` runs the full
+analysis; `scripts/fetch_funding_data.sh` reproduces the data pull.
+
+### Gross funding — the headline number, before any cost
+
+| | 2020 | 2021 | 2022 | 2023 | Full sample (gross, ann.) |
+|---|---|---|---|---|---|
+| BTC (Binance) | +17.2% | +30.6% | +4.2% | +7.9% | **+15.0%** |
+| ETH (Binance) | +27.4% | +37.5% | +0.8% | +8.3% | **+18.5%** |
+
+Consistent across Binance/Bybit/Gate.io (13.7–18.5% annualized gross). This
+roughly matches the ~11% "baseline" figure quoted going in — funding is real
+income, most of the time. But note the collapse in 2022: **the bear-market
+year paid ~10x less than the bull-market year**, and 12–19% of individual
+8-hourly settlements were outright **negative** (a cost, not income) depending
+on exchange/coin. Funding is not a fixed rate; it is itself a volatile,
+regime-dependent quantity.
+
+### Net-of-cost backtest (`scripts/funding_arb.py`)
+
+Costs modelled: 10bp spot taker fee, 5bp perp taker fee, 2bp half-spread per
+leg — a realistic round-trip (open spot + open perp + close spot + close
+perp) costs **0.38%** of notional.
+
+| Strategy | BTC (Binance) CAGR | Sharpe* | MaxDD |
+|---|---|---|---|
+| **[A] Static** — enter once, hold the whole 4y, exit once | **+16.0%** | 10.8 | 1.5% |
+| **[B] Gated** — exit when trailing 3d funding turns negative (no lookahead) | +8.5% | 3.7 | 7.8% |
+| **[C] Cross-exchange spread capture** — long the cheap venue's perp, short the rich one's, trailing signal | **−27.8%** | −10.9 | 62% |
+
+*Sharpe here is computed only on the realized funding P&L stream (the
+whole point of the trade is that price risk is hedged out) — it is **not**
+comparable to a normal strategy Sharpe, because it excludes the tail/margin
+risk that is real and is analyzed separately below. Treat these Sharpe
+numbers as "how smooth funding income looks day to day," not "how safe this
+trade is."
+
+Two results are the important, somewhat counter-intuitive ones:
+
+1. **Trying to be clever about avoiding negative-funding stretches loses
+   money.** [B] underperforms simply buying-and-holding-the-carry [A] in
+   *every* coin/exchange tested (CAGR roughly halved, drawdown up 5–15x) —
+   negative-funding periods in this sample are short, scattered blips, not
+   sustained regimes, so a trailing-signal exit whipsaws in and out and pays
+   the 0.38% round-trip cost repeatedly for little benefit. The cheapest,
+   best-performing version of this trade is the boring one: put it on and
+   leave it on.
+2. **Cross-exchange funding-spread capture — the strategy web research
+   flagged at up to ~29% annualized — is net NEGATIVE once real costs are
+   included**, and this holds at every rebalance speed tested (1-day lookback
+   through 90-day): CAGR ranges from **−42% (1-day signal) up to roughly flat
+   at best (~60–90 day signal), never durably positive**. Decomposing it: the
+   *gross* captured spread between exchanges averages only ~7.5%/yr, but a
+   responsive signal switches which exchange to be long/short on **~40% of
+   days**, and each switch costs ~0.28% (two perp legs, open+close) — turnover
+   alone costs ~40%/yr at a 3-day lookback, dwarfing the tiny spread being
+   chased. This is a direct, data-backed rebuttal of the optimistic headline
+   number: **the ~29% figure is a gross, pre-cost artifact; after realistic
+   transaction costs it does not clear zero in this sample**, consistent with
+   the ~40%-of-opportunities-net-positive caveat flagged going in — if
+   anything, this test found conditions worse than that.
+
+### Liquidation risk — the part "market-neutral" doesn't mean "risk-free"
+
+The short perp leg needs margin, and margin can be wiped out by a sharp
+**rally** (a crash *helps* a short perp — the danger is the price running
+away from you, not crashing). Using spot price as a mark-price proxy (real
+perp prices can gap further in a basis blowout, so this is a floor on the
+risk, not a ceiling), the worst adverse move against a short-perp margin
+position in this real 2020–2023 sample:
+
+| Rebalance discipline | BTC worst weekly rally | ETH worst weekly rally |
+|---|---|---|
+| Weekly (margin topped up every 7 days) | 34.0% | **67.8%** |
+| Never rebalanced across the sample | 1,259% | 4,251% |
+
+The ETH number is not a data artifact — it is the real **Jan 2-9, 2021 move**
+(ETH $730 → $1,225, +68% in one week; BTC did $24.6k → $40.8k, +66%, the same
+week). At standard retail leverage:
+
+| Leverage on perp leg | Initial margin | Survives BTC weekly-rebalanced? | Survives ETH weekly-rebalanced? |
+|---|---|---|---|
+| 2× | 50% | **yes** | **no — liquidated** |
+| 3× | 33% | no — liquidated | no — liquidated |
+| 5×+ | ≤20% | no — liquidated | no — liquidated |
+
+**Only fully (or near-fully) margining the perp leg (≈1×, i.e. posting margin
+roughly equal to the spot notional) survives every historical week in this
+sample without a margin call.** That is the honest risk-adjusted picture:
+funding arb is delta-hedged against *slow* price drift, but a real single
+week of the kind that has actually happened twice in this 4-year sample can
+liquidate a leveraged short-perp leg even while the paired spot position is
+fine — because the two legs typically sit in separate wallets/accounts with
+separate margin, not one netted portfolio, at most retail venues. This is the
+same failure mode that hit real funds running basis trades in 2022 (the
+funding compression in that table above coincided with exactly this kind of
+dislocation risk). **This is not a hypothetical caveat — it is a real,
+recurring feature of this exact 4-year sample.**
+
+### Verdict: does it beat a bank savings rate?
+
+| Version of the trade | Realistic net return | Risk |
+|---|---|---|
+| Fully collateralized (≈1× on perp leg, no liquidation risk found in-sample) | **~half the gross rate** once you account for capital tied up as idle margin buffer, i.e. roughly **7–10%/yr** on total capital deployed, with 2022-style years as low as ~2–4% | Genuinely low *liquidation* risk (survives every week tested); still carries counterparty/exchange risk (hacks, freezes, insolvency — not FDIC-insured), and funding itself can go structurally negative for extended stretches in future bear markets |
+| Moderately levered (2–3× on perp leg, the "attractive" version) | Headline ~14–20%/yr gross-ish, but **would have been liquidated at 3×+ leverage during a real week in this sample (Jan 2021)**, and even 2× fails on ETH | Not survivable at realistic historical stress with meaningful leverage — this is the version that "looks like free money" and is the one that actually blows up |
+| Naive active timing / cross-exchange spread-chasing | **Negative** net of turnover costs | Loses money AND carries the same margin risk, for nothing |
+
+Against today's ~4–5% bank savings benchmark: **the fully-collateralized,
+survivable version of this trade is a real, modest, genuine edge that clears
+the bar most years (~7–10%/yr vs 4–5%) — but by a much smaller margin than
+the headline 11–29% figures suggest, it is not risk-free, it had at least one
+year (2022) where it barely cleared or matched the bank rate, and any
+leverage aggressive enough to meaningfully beat the bank rate by a wide margin
+would have been liquidated at least once in this exact real 4-year sample.**
+Same conclusion this project keeps re-deriving: the honest, survivable version
+of an edge is real but smaller and more fragile than the number that gets
+quoted first.
+
+### Honest limitations
+
+- Perp mark price is proxied by spot close (no separate perp price series
+  reachable here); real basis-blowout risk during panics is therefore
+  understated, not overstated.
+- Only Binance/Bybit/Gate.io and only BTC/ETH were available; smaller-cap
+  perps (which the original research pointers suggested for larger funding
+  spreads) could not be tested — this sandbox could not reach a source for
+  them.
+- 4 years (2020–2023) is a genuinely diverse but still limited sample; it
+  contains exactly one violent multi-week rally in each coin, which is enough
+  to show the liquidation risk is real but not enough to bound its worst case.
+- Exchange counterparty/custody risk (the single biggest real-world driver of
+  crypto-carry-fund losses in 2022, e.g. FTX) is not modelled at all here —
+  it is a separate, non-market risk on top of everything above.
+
 ## Honest limitations
 
 - Sharpe ~0.45 is real but modest; expect losing years (2017 −12.5% at 10% vol).
