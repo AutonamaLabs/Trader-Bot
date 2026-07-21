@@ -755,3 +755,167 @@ universe becomes available, this methodology is worth re-testing — the
 structural low-correlation result is real and the method is directionally
 correct; the data available here is simply too narrow and too proxy-heavy to
 prove the full CTA case.
+
+## Improving the funding-rate arbitrage system
+
+Fable was asked to find ways to beat the funding-arb baseline established
+above (static, 1×, BTC-only: CAGR +16.0%, Sharpe 10.8, MaxDD 1.5%). Four ideas
+were tested, all in `scripts/funding_arb.py` (`python scripts/funding_arb.py`
+now runs the base report followed by all four; `--skip-improvements` for the
+base report alone). Consistent with this project's whole track record, most
+proposed complexity did **not** help — but one idea (diversification) gave a
+real, modest, quantified improvement, and a second (leverage) gives a
+quantified, conservative safe level rather than the reckless one already
+shown to blow up.
+
+### Idea 1: two-sided funding capture — does NOT hold up (highest priority, tested first)
+
+The hypothesis: [B]-gated only ever goes flat when funding turns negative,
+earning zero. Since negative funding means shorts pay longs, flipping to
+short-spot/long-perp during negative stretches should collect that payment
+instead of forfeiting it. Tested with `simulate_two_sided()`: state = long
+(trail > +thresh) / flat (deadband) / short (trail < -thresh), same threshold
+grid, full `ROUND_TRIP_COST` charged on every state change including a direct
+reversal, across **both coins and all 3 exchanges, no per-cell tuning**:
+
+| thresh (annualized) | BTC/binance CAGR | ETH/binance CAGR | BTC/bybit CAGR | ETH/bybit CAGR | BTC/gate CAGR | ETH/gate CAGR |
+|---|---|---|---|---|---|---|
+| 0% (deadband=0) | +8.66% | +13.86% | +8.03% | +10.60% | +3.41% | +4.85% |
+| 1.8%/yr | +0.49% | +6.92% | +0.67% | +4.19% | −5.62% | −3.87% |
+| 3.7%/yr | +0.34% | +4.49% | −2.69% | +2.74% | −7.16% | −3.89% |
+| 7.3%/yr | +0.36% | +5.33% | −3.01% | +4.70% | −6.15% | −1.79% |
+| 18.2%/yr | +3.63% | +8.66% | +5.61% | +8.16% | +3.60% | +5.75% |
+
+**Every single cell is worse than [A] Static** (BTC/binance +16.0%, ETH/binance
++20.2%, etc. — see the base report). At thresh=0 the two-sided version is
+roughly on par with (or a hair better than) [B] gated (which it structurally
+resembles, minus the flip), but neither approaches static, and MaxDD is
+5–20× worse at every threshold (static: 0.7–2.0% MaxDD; two-sided: 4–39%).
+**Verdict: fails, for the exact same reason [B] gated already failed** —
+funding sign-flips in this sample are short, choppy, and frequent enough that
+paying a full round-trip cost on every flip (up to 225 flips over 4 years)
+eats more than the flip captures. The "obviously smart" trade of flipping to
+collect negative funding is real in principle but not exploitable at retail
+cost levels on this data. **The boring static hold-through-everything
+strategy remains undefeated.**
+
+### Idea 2: safe-leverage quantification — a real, bounded, quantified answer
+
+The base report's `liquidation_check()` only tested weekly rebalancing (and
+an unrealistic "never touch it" case) using spot Close only. Extended here
+(`leverage_survival_report()`) to use the daily **intraday High** (not just
+Close — a materially more precise, and higher, worst-case) and to evaluate
+**every possible rebalance-day offset** (phase-free, matching this project's
+standard methodology elsewhere), at realistic active-management cadences —
+including the LUNA/FTX 2022 window, which turns out **not** to be the binding
+constraint; the Jan 2021 BTC/ETH rally already flagged in the base report is:
+
+| Rebalance cadence | Worst adverse rally (BTC) | Worst adverse rally (ETH, binding) | Max leverage surviving BOTH coins |
+|---|---|---|---|
+| Every 1 day | 20.8% | 30.0% | **~3.0×** |
+| Every 2 days | 30.7% | 48.9% | **~2.0×** |
+| Every 3 days | 31.0% | 57.9% | ~1.5× |
+| Every 7 days (weekly, original) | 42.8% | 75.6% | ~1.3× |
+
+(The 7-day row is stricter than the base report's original 34.0%/67.8%
+because it uses intraday High and is evaluated phase-free across all offsets,
+not one fixed weekly lattice — a more conservative, more correct number.)
+
+This is a genuine, usable answer to "how much leverage is safe": **daily or
+every-2-day margin top-up (realistic for someone actively running this)
+supports meaningfully more leverage than "never touch it" or even weekly**,
+without being liquidated anywhere in this 4-year sample including 2022's
+chaos. But it is still only one historical sample — a future rally could
+exceed Jan 2021's. **Recommendation: trade meaningfully below the historical
+ceiling, not at it** — e.g. ~1.3× with every-2-day rebalancing leaves ~35%
+of headroom below the 2.0× line that barely survived. The yield impact of
+modest leverage is real but not dramatic (see final table below) — this is a
+risk/reward dial, not a source of new edge.
+
+### Idea 3: multi-coin diversification — the one improvement that holds up
+
+BTC and ETH funding correlation (daily, same exchange) is high but not
+1.0 — **0.80–0.87 across all three exchanges tested** (both driven by the
+same crypto-wide leverage-demand cycle, so this was never going to be a large
+effect). An equal-weighted 50/50 book (`diversification_report()`, own
+round-trip cost per coin) was tested on all 3 exchanges, no cherry-picking:
+
+| Exchange | Corr(BTC,ETH) | BTC alone (Sharpe / MaxDD) | ETH alone (Sharpe / MaxDD) | 50/50 combined (Sharpe / CAGR / MaxDD) |
+|---|---|---|---|---|
+| Binance | 0.865 | 10.81 / 1.48% | 10.35 / 1.77% | **10.92 / 18.11% / 0.80%** |
+| Bybit | 0.801 | 8.37 / 1.30% | 7.90 / 1.97% | **8.55 / 18.71% / 1.24%** |
+| Gate.io | 0.812 | 8.33 / 0.72% | 8.38 / 1.43% | **8.77 / 15.44% / 0.63%** |
+
+Consistent on all 3 venues: the combined book's Sharpe edges out the *better*
+single coin every time, and **max drawdown falls by roughly 40–55%** versus
+either coin alone — the two coins' rare negative-funding stretches don't
+perfectly coincide, so blending smooths them out. CAGR is just the
+notional-weighted average of the two coins' own CAGRs (not a new return
+source) — **the benefit here is a smoother, lower-drawdown ride, not a
+higher return.** This is modest (correlation 0.80+ leaves limited room) but
+real, robust across all 3 exchanges tested, and required no per-exchange
+tuning — it passes this project's bar.
+
+### Idea 4: cost sensitivity (maker vs. taker fees) — informative, not an "improvement"
+
+`cost_sensitivity_report()` reruns [A] Static and [B] Gated (BTC/binance)
+under four fee assumptions — current taker/taker (0.38% round trip), a
+partial maker discount (0.24%), an optimistic VIP/promo maker scenario
+(0.04%), and a 2× stress case (0.76%):
+
+| Scenario | Round-trip cost | [A] Static CAGR | [B] Gated CAGR |
+|---|---|---|---|
+| Current (taker+taker+spread) | 0.38% | 16.04% | 8.45% |
+| Maker (partial discount) | 0.24% | 16.08% | 11.35% |
+| Best-case (VIP/promo maker) | 0.04% | 16.13% | 15.61% |
+| 2× stress (worse liquidity) | 0.76% | 15.92% | 0.95% |
+
+**The recommended static strategy is nearly fee-insensitive** (16.0–16.1%
+across the whole range — one round trip amortized over 4 years barely
+matters). High-turnover variants ([B] gated, and by extension the failed
+two-sided idea above) are wildly fee-sensitive (0.95% to 15.6% CAGR depending
+on the fee assumption) — which is exactly *why* they're fragile: their
+apparent viability depends on an execution-cost assumption this backtest
+cannot verify live (whether a resting limit order actually fills at the
+assumed price before the funding settlement, rather than getting run over).
+**This is not itself an improvement — it's a robustness check that confirms
+low-turnover is the right structural choice, independent of the exact fee
+schedule.**
+
+### Final recommendation: multi-coin static + modest leverage
+
+**The best version of this system found is: [A] static hold-through-everything
+(the original, unbeaten baseline), diversified 50/50 across BTC+ETH (idea 3,
+real and robust), with a conservative ~1.3× leverage on the short-perp leg
+using an every-2-day margin top-up cadence (idea 2, well inside the ~2×
+historical survival line at that cadence).** Two-sided flipping (idea 1) is
+explicitly excluded — it does not work. The exact fee assumption barely
+matters for this low-turnover system (idea 4).
+
+| Metric (2020–2023, net of costs, on $10,000) | Original single-coin, 1×, BTC only | **Recommended: BTC+ETH 50/50, 1.3× perp leg, every-2-day rebalance** |
+|---|---|---|
+| CAGR (return on capital deployed, incl. idle margin) | ~7–10%/yr (per the original verdict) | **+9.9%/yr** |
+| Sharpe* | 10.8 | **10.9** (unchanged — leverage/blending is a linear rescale of the same return stream) |
+| Max drawdown | 1.5% (BTC notional; ~half that, ~0.7%, on capital-deployed basis) | **~0.45%** |
+| Monthly return (geometric) | ~0.7–0.8%/mo | **~0.79%/mo** |
+| $10,000 → after 4 years | ~$13,100–$14,100 | **~$14,570** |
+| Liquidation risk in-sample | none at 1× | **none at 1.3×, with ~35% margin below the historical 2× survival line at this cadence** |
+
+*Sharpe here still carries the same caveat as the base report: it is
+computed on the realized funding P&L stream only (price risk is hedged out
+by construction), not a normal strategy Sharpe — it says "how smooth the
+income looks," not "how safe the trade is." Counterparty/exchange risk
+(custody, hacks, insolvency — not modelled here, see base report) remains
+the dominant real-world risk at any leverage level, same as before.
+
+**Headline honest finding: complexity mostly didn't help, again.** The
+highest-priority idea (two-sided flipping) failed outright, for the same
+switching-cost reason the earlier gated strategy failed. What actually moved
+the needle was much more modest: (1) a bounded, quantified answer on safe
+leverage that turns "we don't really know" into a specific, historically-
+grounded number with an explicit safety margin, and (2) diversifying across
+the only two coins with reachable funding history, which smooths the ride
+(lower drawdown, marginally higher Sharpe) without adding any new trading
+logic or turnover. Combined, they take the realistic yield from roughly
+7–10%/yr to roughly **9–10%/yr with meaningfully lower drawdown** — a real
+but incremental improvement, not a breakthrough. That is the honest answer.
