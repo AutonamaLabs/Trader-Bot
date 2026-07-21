@@ -919,3 +919,181 @@ the only two coins with reachable funding history, which smooths the ride
 logic or turnover. Combined, they take the realistic yield from roughly
 7–10%/yr to roughly **9–10%/yr with meaningfully lower drawdown** — a real
 but incremental improvement, not a breakthrough. That is the honest answer.
+
+## Can leverage reach 20-30%/yr? (the honest ceiling)
+
+The user pushed back — correctly — on the retail-forex-marketing myth that
+20-30%/yr is a normal, findable return (ESMA: 71-89% of retail forex accounts
+lose money). The honest general answer given before this test: real 20-30%/yr
+systems are rare and are typically **leverage applied to an already
+low-volatility, high-Sharpe strategy**, not a magically-better directional
+edge — trading safety margin for return. This project has exactly one sleeve
+with that property (funding-arb, return-stream Sharpe ~10.9) and one much
+weaker, decaying sleeve (equity MR swing). Every prior leverage test in this
+repo levered the funding-arb sleeve **alone**. This section tests, for the
+first time, whether leveraging the two sleeves **blended together** changes
+the answer — `scripts/blended_leverage.py` (reproduce with `python
+scripts/blended_leverage.py`).
+
+### Method and honest data-overlap caveat
+
+Funding-rate data only covers **2020-01-01 → 2023-12-31**. The honest,
+point-in-time equity data (`data/universe_pit`) covers 2000-2024, but is
+sliced to that **same 4-year window** for every number below — this is a
+real overlap, not a synthetic one, but it is short, and it is the *only*
+overlap available with real data reachable from this sandbox. (SMA200/
+precompute still runs on the full 2000-2023 history first, to avoid the
+truncated-start warmup artifact documented in `validate_pit_universe.py` —
+only the resulting 2020-2023 daily returns are used downstream.)
+
+Capital accounting, shown as code, not asserted (closing the gap flagged by
+the user, where a CAGR-on-notional number had previously been presented as
+CAGR-on-capital without a backing computation): funding-arb capital deployed
+= spot notional (bought outright) + perp margin (notional / L), so **return
+on capital = return on notional × L/(L+1)** — `capital_deployed_multiplier()`
+in the script. Applied to the BTC+ETH 50/50 notional series at L=1.3 (the
+existing recommendation), this reproduces the previously-asserted numbers
+from first principles: **CAGR +9.87%, Sharpe 10.92, MaxDD 0.45%** — matching
+the ~9.9% / ~0.45% figures already in this document almost exactly, and
+confirming the earlier leverage-vs-return spot-check line (L=2 → 11.74%,
+L=3 → 13.30%, L=5 → 14.88%, all reproduced here to within a few bp of the
+quoted 11.8/13.4/15.0%).
+
+The equity sleeve uses the standard per-trade-risk (1%) point-in-time MR
+sleeve, over this same 2020-2023 window: **CAGR +0.36%, Sharpe 0.11, MaxDD
+6.84%** — this is the "decaying since 2020" period identified in the
+point-in-time validation section above, now isolated as its own return
+series rather than a summary statistic.
+
+### Correlation — genuinely low, but the second sleeve brings little return to blend
+
+Both return series are resampled to weekly (crypto trades 7 days/week,
+equities ~5 — weekly compounding is the common frequency both can be fairly
+compared at) and aligned on 209 common weeks:
+
+| | Funding-arb (capital-deployed) | Equity MR swing |
+|---|---|---|
+| Annualized weekly-return vol | 1.98% | 6.30% |
+| Correlation (weekly) | **+0.069** | |
+
+**Genuinely close to uncorrelated** — consistent with the two sleeves trading
+completely different markets and mechanisms (crypto perp funding vs. equity
+mean-reversion). But — the key honest nuance this section adds — low
+correlation only helps if the diversifying asset has a return worth adding.
+Over this specific 2020-2023 overlap the equity sleeve's own return is
+**nearly flat (Sharpe 0.11)**, so blending it in mostly adds volatility for
+little extra return, rather than adding a second real return stream.
+
+### Weighting schemes tested (not cherry-picked — both reported)
+
+| Scheme | Funding-arb weight | Equity weight |
+|---|---|---|
+| 50/50 naive | 50% | 50% |
+| Inverse-vol (equal risk contribution) | 76% | 24% |
+
+### Portfolio-leverage sweep
+
+Additional leverage `L_port` is applied to the **whole blended book**, on top
+of the funding-arb sleeve's own embedded 1.3×. The two compound
+multiplicatively, not additively: the funding-arb perp leg's effective
+leverage becomes `L_eff = 1.3 × L_port`. Liquidation survival reuses
+`funding_arb.py`'s own `worst_intraday_runup()` / `MAINTENANCE_MARGIN`
+mechanic unchanged — the same real 2020-2023 stress test (including the Jan
+2021 BTC/ETH rally, the binding event, and 2022's LUNA/FTX chaos, which is
+not binding) — evaluated at both the primary every-2-day rebalance cadence
+(matching the existing 1.3× recommendation) and, as a sensitivity, the more
+active every-1-day cadence. The equity leg has no margin/liquidation
+mechanic anywhere in this project (long-only cash swing, not a levered perp)
+— a much cruder check is reported for it too (does a single historical
+week's loss exceed `1/L_port`, i.e. would a naive, no-top-up margin loan on
+that leg alone have been wiped out); it never binds in this grid.
+
+**50/50 naive weighting:**
+
+| L_port | L_eff (fund leg) | CAGR | Sharpe | MaxDD | Survives 2-day cadence? | Survives 1-day cadence? |
+|---|---|---|---|---|---|---|
+| 1.0× | 1.30× | 5.02% | 1.47 | 2.47% | yes (76.4% cushion) | yes |
+| 1.5× | 1.95× | 7.58% | 1.47 | 3.70% | yes (50.8% cushion) | yes |
+| 2.0× | 2.60× | 10.16% | 1.47 | 4.93% | **NO — liquidated (ETH)** | yes (38.0% cushion) |
+| 3.0× | 3.90× | 15.42% | 1.47 | 7.38% | NO — liquidated | NO — liquidated |
+| 4.0× | 5.20× | 20.79% | 1.47 | 9.82% | NO — liquidated | NO — liquidated |
+| 5.0× | 6.50× | 26.25% | 1.47 | 12.25% | NO — liquidated | NO — liquidated |
+
+**Inverse-vol (76/24) weighting:**
+
+| L_port | L_eff (fund leg) | CAGR | Sharpe | MaxDD | Survives 2-day cadence? | Survives 1-day cadence? |
+|---|---|---|---|---|---|---|
+| 1.0× | 1.30× | 7.49% | 3.29 | 1.09% | yes | yes |
+| 1.5× | 1.95× | 11.42% | 3.29 | 1.63% | yes | yes |
+| 2.0× | 2.60× | 15.48% | 3.29 | 2.18% | **NO — liquidated (ETH)** | yes |
+| 3.0× | 3.90× | 23.98% | 3.29 | 3.26% | NO — liquidated | NO — liquidated |
+| 4.0× | 5.20× | 33.04% | 3.29 | 4.35% | NO — liquidated | NO — liquidated |
+| 5.0× | 6.50× | 42.68% | 3.29 | 5.43% | NO — liquidated | NO — liquidated |
+
+The binding constraint at every leverage level is the **same one flagged in
+the original single-sleeve leverage test**: ETH's Jan 2021 rally
+(+48.9% over 2 days at the worst point in this sample, +30.0% over 1 day).
+Blending in the equity sleeve does not change what breaks the book, or when
+— the funding-arb perp leg's own margin mechanic remains the binding risk at
+every weighting tested.
+
+### 20-30%/yr target check — the direct answer
+
+Every cell in the 20-30% CAGR band, at every weighting scheme and every
+cadence tested, is on the "liquidated" side of the line:
+
+- 50/50 naive: 20.8% (L_port=4×) and 26.3% (L_port=5×) both land in-band —
+  **both unsafe** (fund leg liquidated on ETH at both the 2-day and 1-day
+  cadence).
+- Inverse-vol: 24.0% (L_port=3×) lands in-band — **unsafe** at the 2-day
+  cadence, and *still* unsafe at the most-active 1-day cadence tested.
+
+**Highest CAGR that survives the real 2020-2023 sample (including the Jan
+2021 rally and the 2022 LUNA/FTX crash), by weighting and cadence:**
+
+| Weighting | Cadence | L_port | CAGR | MaxDD |
+|---|---|---|---|---|
+| 50/50 naive | 2-day (primary) | 1.5× | 7.6% | 3.7% |
+| 50/50 naive | 1-day (most-active) | 2.0× | 10.2% | 4.9% |
+| Inverse-vol | 2-day (primary) | 1.5× | **11.4%** | 1.6% |
+| Inverse-vol | 1-day (most-active) | 2.0× | **15.5%** | 2.2% |
+
+### Verdict
+
+**No — 20-30%/yr is not reachable while staying inside the leverage level
+that actually survived the 2020-2023 sample.** Reaching 20% requires
+`L_port≈4×` (50/50 weighting) or `L_port≈3×` (inverse-vol weighting) on top
+of the sleeve's own 1.3× — both of which push the funding-arb perp leg's
+effective leverage to 3.9-5.2×, well past the ~2× (every-2-day) / ~3×
+(every-1-day) ceiling this exact real sample has already shown blows up on
+ETH's Jan 2021 rally. This is not a hypothetical: it is the same failure mode
+already documented earlier in this file for the sleeve alone, now confirmed
+to persist unchanged once the equity sleeve is blended in.
+
+The honest realistic ceiling, using the best (inverse-vol) weighting and
+already-conservative every-2-day rebalance discipline the rest of this
+project recommends, is **~11%/yr with ~1.6% max drawdown** — modestly above
+the existing single-sleeve 9.9% recommendation, not a step-change. Pushing to
+the most-active daily-rebalance cadence (materially more operational effort,
+and still only a single historical sample's worth of evidence that it would
+hold) raises that to **~15.5%/yr with ~2.2% max drawdown** — closer to, but
+still clearly short of, the 20-30% band, and with meaningfully more
+drawdown/liquidation risk than the ~0.45% seen at the original 1.3×
+recommendation (roughly **4-5× the drawdown for roughly 1.5-2× the return**).
+
+**Why blending barely moved the ceiling:** correlation between the two
+sleeves is genuinely low (+0.069), which is the necessary condition for
+diversification to help — but the equity sleeve's own return over this exact
+overlap window is close to flat (Sharpe 0.11, part of the documented
+post-2020 decay), so there is little extra *return* for the low correlation
+to add; leveraging the funding-arb sleeve alone already gets to within a
+point or two of the same ceiling (L=2 alone: 11.74%, matching the blended
+inverse-vol figure almost exactly) at the same historically-survived
+leverage boundary. **The honest finding is not "blending unlocks higher safe
+leverage" — it is "the safe ceiling for this whole project, blended or not,
+is bounded by the funding-arb sleeve's own real 2020-2023 liquidation
+stress test, at roughly 11-16%/yr depending on how actively it is managed,
+and 20-30%/yr is outside that line."** If a future rally exceeds Jan 2021's
+(this is a single 4-year sample), even the "safe" leverage levels reported
+here would not hold — the same caveat that applies to every leverage number
+in this document.
